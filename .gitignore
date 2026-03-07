@@ -1,0 +1,30 @@
+# ── Credentials & secrets ─────────────────────────────────────────────────────
+.env
+.cache
+
+# ── Runtime state (generated files — contain session/behavioral data) ──────────
+state.json
+feedback_signal.json
+wins_log.json
+feedback_log.json
+focus_feedback_log.json
+
+# ── Dataset (large Kaggle CSV — download separately with `make data`) ──────────
+data/
+
+# ── Trained models (generated — re-create with `make train`) ───────────────────
+models/*.joblib
+models/*.pkl
+models/accuracy_log.json
+
+# ── Process / OS artifacts ────────────────────────────────────────────────────
+.pids
+.DS_Store
+Thumbs.db
+__pycache__/
+*.pyc
+*.pyo
+
+# ── Logs ──────────────────────────────────────────────────────────────────────
+logs/
+*.log

@@ -1,0 +1,44 @@
+{
+  "run_at": "2026-03-01T18:56:08.710916Z",
+  "dataset": "birdy654/eeg-brainwave-dataset-mental-state",
+  "model": "SGDClassifier(loss=log_loss, max_iter=1000, random_state=42)",
+  "split": {
+    "test_size": 0.2,
+    "random_state": 42,
+    "stratified": true
+  },
+  "n_train": 1983,
+  "n_test": 496,
+  "majority_baseline": {
+    "class": "relaxed",
+    "accuracy": 0.334677
+  },
+  "conditions": {
+    "eeg_only": {
+      "n_features": 988,
+      "accuracy": 0.919355,
+      "accuracy_pct": 91.94
+    },
+    "audio_only": {
+      "n_features": 5,
+      "accuracy": 0.334677,
+      "accuracy_pct": 33.47,
+      "note": "All features are constant 0.5 placeholders. No discriminative signal \u2014 accuracy reflects majority-class prediction."
+    },
+    "multimodal": {
+      "n_features": 993,
+      "accuracy": 0.917339,
+      "accuracy_pct": 91.73,
+      "note": "EEG features scaled with StandardScaler; audio features appended unscaled (mirrors train_classifier.py and eeg_source.py inference path)."
+    }
+  },
+  "audio_contribution": {
+    "delta_accuracy": -0.002016,
+    "delta_accuracy_pct": -0.2,
+    "interpretation": "Negligible: the 5 placeholder audio scalars add no accuracy over EEG alone. This is the expected result \u2014 all features are constant 0.5 and carry no discriminative signal. The delta will grow after partial_fit adapts the model to real Spotify feature distributions at runtime."
+  },
+  "caveats": [
+    "Audio scalars are trained on constant 0.5 placeholders \u2014 real Spotify values are only available at runtime via partial_fit. This study measures the structural contribution of the audio feature dimensions, not real audio content.",
+    "EEG features are pre-processed Kaggle spectral columns (freq_XXX_C), not raw time-domain signals from the Arduino. The StandardScaler bridges distributions at inference time (proxy-trained, scaler-aligned)."
+  ]
+}

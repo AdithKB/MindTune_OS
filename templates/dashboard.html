@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MindTune-OS — BCI Adaptive Music</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Sora:wght@300;400;500;600;700;800&family=DM+Mono:ital,wght@0,400;0,500;1,400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard.css') }}">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+</head>
+<body>
+
+  <!-- ══ Startup Loader ══════════════════════════════════════════════ -->
+  <div id="startup-loader" class="mode-loader visible startup">
+    <div class="pulse-container">
+      <div class="pulse-circle startup"></div>
+      <div class="pulse-icon">📡</div>
+    </div>
+    <div class="loader-text startup">System Initialization</div>
+    <div class="loader-sub">
+      <div class="status-badge">Synchronizing Neural Stream</div>
+      <p style="margin-top:20px; color:var(--text3); font-size:0.8rem; line-height:1.6;">
+        ⚠️ <strong>Action Required:</strong><br>
+        Ensure <strong>Spotify</strong> is open and playing on your device
+      </p>
+    </div>
+  </div>
+
+  <!-- ══ Mode Switch Loader ══════════════════════════════════════════ -->
+  <div id="mode-loader" class="mode-loader">
+    <div class="pulse-container">
+      <div class="pulse-circle"></div>
+      <div class="pulse-icon">🧠</div>
+    </div>
+    <div id="loader-text" class="loader-text">Switching Mode...</div>
+  </div>
+
+  <!-- ══ Topbar ══════════════════════════════════════════════════════ -->
+  <header class="topbar">
+    <div class="topbar-brand">
+      <span class="brand-name">MindTune</span>
+      <span class="brand-sep">·</span>
+      <span class="brand-tag">BCI Adaptive Music</span>
+    </div>
+    <div class="topbar-right">
+      <button id="mode-chip" class="mode-chip calm" onclick="toggleFocusMode()"
+              title="Click to enter Focus Mode (lo-fi/instrumental music)">⇄ CALM MODE</button>
+      <div id="blink-indicator" class="blink-indicator" title="Double-blink your eyes to skip the current track">
+        <div class="blink-pips">
+          <div class="blink-pip"></div>
+          <div class="blink-pip"></div>
+        </div>
+        <span id="blink-text">👁 Blink</span>
+      </div>
+      <button onclick="simulateDoubleBlink()" class="sim-btn" title="Developer Mode: Simulate intentional double-blink">⚡</button>
+      <div class="live-pill">
+        <div id="live-dot" class="live-dot"></div>
+        <span id="live-text">Connecting</span>
+      </div>
+      <div id="session-badge" class="session-pill" style="display:none;"></div>
+    </div>
+  </header>
+
+  <!-- ══ Contextual banners (hidden until triggered) ════════════════ -->
+  <div id="pending-win-banner">
+    <span class="pending-win-icon">🏆</span>
+    Stress dropped! Saving win when track ends — closed-loop confirmed
+  </div>
+  <div id="focus-banner">
+    <div class="focus-banner-dot"></div>
+    FOCUS MODE ACTIVE — playing instrumental music to protect your attention
+    <span id="focus-banner-ratio" style="opacity:0.7;"></span>
+  </div>
+
+  <!-- ══ Goal strip — plain-English system status ════════════════════ -->
+  <div id="goal-strip" class="goal-strip">
+    <div class="goal-content">
+      <span class="goal-icon" id="goal-icon">🔍</span>
+      <span class="goal-label">System Goal</span>
+      <span class="goal-text" id="goal-text">Scanning brainwaves — waiting for stress signal</span>
+    </div>
+    <div id="debug-msg" style="font-size:0.65rem; color:#fde047; font-weight:700; padding:2px 8px; background:rgba(0,0,0,0.25); border-radius:4px; display:none; white-space:nowrap;"></div>
+  </div>
+
+  <!-- ══ Hero Grid: Brain State | Stress Timeline | Now Playing ════ -->
+  <div class="hero-grid">
+
+    <!-- Brain State Card: gauge ring + EEG details -->
+    <div class="panel brain-card">
+      <div class="panel-label">Brain State</div>
+
+      <!-- SVG stress gauge ring — filled 0–5 by JS -->
+      <div class="gauge-wrapper">
+        <svg class="gauge-ring" viewBox="0 0 140 140" aria-hidden="true">
+          <!-- Track: faint full circle -->
+          <circle class="gauge-track" cx="70" cy="70" r="56"
+                  fill="none" stroke-width="10"
+                  stroke-dasharray="351.86" stroke-dashoffset="0"
+                  transform="rotate(-90 70 70)" />
+          <!-- Fill: JS sets stroke-dashoffset = 351.86 × (1 - stress/5) -->
+          <circle id="gauge-fill" class="gauge-fill" cx="70" cy="70" r="56"
+                  fill="none" stroke-width="10"
+                  stroke-dasharray="351.86" stroke-dashoffset="351.86"
+                  transform="rotate(-90 70 70)" />
+        </svg>
+        <!-- Only the number lives inside the gauge ring — avoids overflow -->
+        <div class="gauge-center">
+          <div id="gauge-val" class="gauge-val">0<span class="gauge-denom">/5</span></div>
+        </div>
+      </div>
+
+      <!-- State chip + explanation live BELOW the gauge, in normal card flow.
+           This gives them the full card width so long text like
+           "STRESSED · 🎵 INTERVENING" never overlaps the circle. -->
+      <div id="state-chip" class="state-chip other">Waiting</div>
+      <div id="state-explain" class="state-explain">Scanning brainwaves...</div>
+
+      <!-- Last 5 EEG readings as coloured dots -->
+      <div class="dots-section">
+        <span class="dots-label">Last 5 EEG readings</span>
+        <div class="dots" id="dots-row"></div>
+      </div>
+
+      <!-- ML signal confidence (shown when available) -->
+      <div class="conf-badge" id="conf-badge" style="display:none;">
+        Signal confidence: <span id="conf-val">0.00</span>
+      </div>
+
+      <!-- EEG band breakdown (shown when backend sends band_scores) -->
+      <div class="band-strip" id="band-strip" style="display:none;"></div>
+    </div>
+
+    <!-- Stress Timeline -->
+    <div class="panel timeline-card">
+      <div class="panel-label">Stress Timeline</div>
+      <div class="panel-sub">Real-time stress from EEG — music plays automatically at 3/5</div>
+      <div id="chart-wrap"><canvas id="timeline-chart"></canvas></div>
+      <div class="chart-footer">
+        <div class="timeline-legend">
+          <div class="legend-item"><div class="legend-line stressed"></div>Stressed ≥3/5 (music triggers)</div>
+          <div class="legend-item"><div class="legend-line calm"></div>Calm / Relaxed</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Now Playing + Controls -->
+    <div class="panel now-playing-card">
+      <div class="panel-label">Now Playing</div>
+      <div class="panel-sub" id="nowplaying-panel-sub">Music selected by AI to lower your stress level</div>
+
+      <div class="track-info-row">
+        <!-- Animated music bars (playing indicator) -->
+        <div class="track-art">
+          <div class="music-viz">
+            <div id="mb1" class="mbar"></div>
+            <div id="mb2" class="mbar"></div>
+            <div id="mb3" class="mbar"></div>
+          </div>
+        </div>
+        <div class="track-meta">
+          <div id="track-name" class="track-name">—</div>
+          <div id="artist-name" class="artist-name"></div>
+          <a id="spotify-link" class="spotify-link" href="#" target="_blank" rel="noopener noreferrer" style="display:none">▶ Open in Spotify</a>
+        </div>
+      </div>
+
+      <div id="music-status" class="music-status">Not playing · Play music on Spotify</div>
+
+      <!-- Mode toggle (calm ↔ focus) -->
+      <button id="mode-toggle-btn" class="mode-toggle-btn" onclick="toggleFocusMode()">
+        <span class="mode-toggle-label">
+          <span id="mode-toggle-icon">🧘</span>
+          <span id="mode-toggle-text">CALM MODE</span>
+        </span>
+        <span class="mode-toggle-switch">⇄ Switch</span>
+      </button>
+
+      <!-- Feedback buttons (enabled only while music plays) -->
+      <div id="calm-feedback-row" class="feedback-row">
+        <button id="btn-up" class="fb-btn fb-up" disabled onclick="sendFeedback('up')">
+          👍 This helps
+        </button>
+        <button id="btn-down" class="fb-btn fb-down" disabled onclick="sendFeedback('down')">
+          👎 Try another
+        </button>
+      </div>
+      <div id="fb-confirm" class="fb-confirm"></div>
+
+      <!-- Learning phase badge -->
+      <div id="learning-badge" class="learning-badge"></div>
+      <div id="status-msg" class="status-msg"></div>
+
+      <!-- Calm audio profile (shown after first wins) -->
+      <div id="profile-card" class="profile-card" style="display:none;">
+        <div class="profile-title">Your Calm Audio Profile</div>
+        <div class="profile-chips" id="profile-chips"></div>
+      </div>
+    </div>
+
+  </div><!-- /hero-grid -->
+
+  <!-- ══ Secondary Grid: AI Reasoning | Personalisation Stats ══════ -->
+  <div class="secondary-grid">
+
+    <!-- AI Agent reasoning -->
+    <div class="panel">
+      <div class="panel-label">AI Agent Reasoning</div>
+      <div class="panel-sub" id="agent-panel-sub">Why the AI chose this music — learns from your past reactions</div>
+      <div id="reasoning" class="reasoning-text">—</div>
+      <div class="sub-label">Tried this session</div>
+      <div id="tried-tags" class="tried-tags">
+        <span style="font-size:0.68rem;color:var(--text3)">None yet</span>
+      </div>
+      <div class="wins-footer">Total wins: <span id="wins-count">0</span></div>
+    </div>
+
+    <!-- Personalisation counters + phase -->
+    <div class="panel">
+      <div class="panel-label">Personalisation</div>
+      <div class="panel-sub">Feedback teaches the AI which music works for your brain</div>
+      <div class="pref-stats-row">
+        <div class="pref-counters">
+          <div class="pref-counter">
+            <div id="pref-total" class="pref-counter-val tot">0</div>
+            <div class="pref-counter-lbl">Feedback</div>
+          </div>
+          <div class="pref-counter">
+            <div id="pref-pos" class="pref-counter-val pos">0</div>
+            <div class="pref-counter-lbl">↑ Helpful</div>
+          </div>
+          <div class="pref-counter">
+            <div id="pref-neg" class="pref-counter-val neg">0</div>
+            <div class="pref-counter-lbl">↓ Skipped</div>
+          </div>
+        </div>
+        <div>
+          <div id="pref-phase" class="pref-phase-badge p1">Phase 1 — Frequency scoring</div>
+          <div id="pref-hint" class="pref-hint" style="margin-top:4px;">Give 10 feedback entries to activate ML model</div>
+        </div>
+        <div class="pref-kb-hint">Use 👍 / 👎 in the Now Playing card</div>
+      </div>
+    </div>
+
+  </div><!-- /secondary-grid -->
+
+  <!-- ══ Learning Details: Session History + Brain Patterns ════════ -->
+  <div class="panel" style="margin-bottom:10px;">
+    <div class="panel-label">Learning &amp; Session History</div>
+    <div class="panel-sub">Session-by-session win rate — shows whether the AI is getting better at helping you</div>
+    <div class="learn-split">
+
+      <div class="learn-left">
+        <div class="learn-section-lbl">Session History</div>
+        <div id="sessions-list">
+          <div class="no-sessions">No session data yet</div>
+        </div>
+        <div id="trend-line" class="trend-line" style="display:none;"></div>
+      </div>
+
+      <div class="learn-right">
+        <div class="learn-section-lbl">Brain Patterns Learned</div>
+        <div class="tag-row" id="top-tags-row" style="display:none;">
+          <span class="tag-row-lbl">Works for you:</span>
+          <div id="top-tags"></div>
+        </div>
+        <div class="tag-row" id="bad-tags-row" style="display:none;">
+          <span class="tag-row-lbl">Doesn't help:</span>
+          <div id="bad-tags"></div>
+        </div>
+        <div id="eeg-influence-section" style="display:none; margin-top:10px;">
+          <div class="eeg-section-lbl">Brainwave → music link (ML-learned)</div>
+          <div id="eeg-bars"></div>
+        </div>
+        <div id="ml-tag-section" style="display:none; margin-top:8px;">
+          <div class="tag-row" id="ml-top-row" style="display:none;">
+            <span class="tag-row-lbl">ML best match:</span>
+            <div id="ml-top-tags"></div>
+          </div>
+          <div class="tag-row" id="ml-worst-row" style="display:none;">
+            <span class="tag-row-lbl">ML avoids:</span>
+            <div id="ml-worst-tags"></div>
+          </div>
+        </div>
+        <div class="no-sessions" id="brain-patterns-empty" style="margin-top:4px;">No patterns learned yet — give some 👍 / 👎 feedback</div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ══ Memory Log ════════════════════════════════════════════════ -->
+  <div class="panel">
+    <div class="panel-label">Memory Log</div>
+    <div class="memory-subheading">Every track the AI has tried — green = stress dropped (WIN), red = stress stayed high (FAIL)</div>
+    <div class="memory-grid" id="memory-log">
+      <div class="memory-empty">No entries yet — first session</div>
+    </div>
+  </div>
+
+  <!-- ══ Footer: How it works ══════════════════════════════════════ -->
+  <div class="hiw-strip">
+    <div class="hiw-step">📡 EEG Brainwaves</div>
+    <div class="hiw-arrow">→</div>
+    <div class="hiw-step">🧠 ML Classifier</div>
+    <div class="hiw-arrow">→</div>
+    <div class="hiw-step">⚡ Stress Detected</div>
+    <div class="hiw-arrow">→</div>
+    <div class="hiw-step">🎵 AI Selects Music</div>
+    <div class="hiw-arrow">→</div>
+    <div class="hiw-step">📊 Learns &amp; Adapts</div>
+  </div>
+
+  <script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
+</body>
+</html>
