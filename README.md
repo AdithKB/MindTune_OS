@@ -197,14 +197,7 @@ Open the `.env` file in Notepad (or any text editor) and fill in every field:
 
 ### Step 4 — Train the classifier
 
-Open a **Command Prompt** in the project folder:
-- In File Explorer, navigate to the project folder
-- Click the address bar, type `cmd`, press Enter
-
-Then run:
-```
-python src\train_classifier.py
-```
+Double-click **`train.bat`** inside the project folder.
 
 Expected output:
 ```
@@ -273,7 +266,7 @@ A previous session is still running. Double-click `stop.bat`, wait a few seconds
 
 ## Dashboard
 
-The live dashboard at `http://127.0.0.1:5050` updates every 2 seconds.
+The live dashboard at `http://127.0.0.1:5050` updates every 1 second.
 
 ```
 ┌────────────────────────────────────────────────────────────────┐
@@ -350,6 +343,7 @@ eeg-music-system/
 ├── run.bat                   ← Windows: double-click to start
 ├── stop.bat                  ← Windows: double-click to stop
 ├── setup.bat                 ← Windows: first-time setup (pip install + .env)
+├── train.bat                 ← Windows: train the classifier
 ├── requirements.txt          ← Python dependencies
 ├── .env.example              ← credential template (copy → .env)
 ├── .env                      ← your credentials (gitignored)
