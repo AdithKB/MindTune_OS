@@ -4,7 +4,7 @@ SHELL   := /bin/bash
 # Linux/macOS systems "python3" is correct.
 PYTHON := $(shell if python -c "import joblib" 2>/dev/null; then echo python; elif python3 -c "import joblib" 2>/dev/null; then echo python3; else echo python3; fi)
 
-.PHONY: help setup train ablation check run stop logs status clean
+.PHONY: help setup train tinyml ablation check run stop logs status clean
 
 # ── Default target ────────────────────────────────────────────────────────────
 help:
@@ -16,6 +16,7 @@ help:
 	@echo "  First-time setup"
 	@echo "    setup          Install dependencies and create .env template"
 	@echo "    train          Train the EEG classifier (SGDClassifier, ~seconds)"
+	@echo "    tinyml         Train TinyML model + regenerate arduino/arduino_inference.h"
 	@echo "    ablation       Run ablation study (EEG-only vs Audio-only vs Multimodal)"
 	@echo "    check          Validate all required files are present"
 	@echo ""
@@ -68,6 +69,18 @@ train:
 		$(PYTHON) src/train_classifier.py; \
 		echo "✓ Training complete. Models saved to models/"; \
 	fi
+
+# ── TinyML — train Arduino-compatible 5-feature model ────────────────────────
+tinyml:
+	@if [ ! -f data/eeg_mental_state.csv ]; then \
+		echo "ERROR: data/eeg_mental_state.csv not found."; \
+		echo "  Download from: https://www.kaggle.com/datasets/birdy654/eeg-brainwave-dataset-mental-state"; \
+		echo "  Save as: data/eeg_mental_state.csv"; \
+		exit 1; \
+	fi
+	@echo "→ Training TinyML classifier and regenerating arduino/arduino_inference.h..."
+	@$(PYTHON) src/train_tinyml.py
+	@echo "✓ Done. Upload arduino/mindtune_edge.ino to your Arduino Uno R4 Minima."
 
 # ── Ablation study ────────────────────────────────────────────────────────────
 ablation:

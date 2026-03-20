@@ -13,7 +13,7 @@ A real-time system that replays EEG brainwave data, classifies mental state with
 │                        main_loop.py                           │
 │  EEG CSV ──► ML Classifier ──► Stress Score ──► Logic        │
 └──────┬────────────────────────────────────┬──────────────────┘
-       │ stress ≥ 3/5                       │ write every 2 s
+       │ stress ≥ 3/5                       │ write every 1 s
        ▼                                    ▼
 ┌─────────────┐   search query    ┌──────────────────┐
 │  agent.py   │ ────────────────► │spotify_controller│
@@ -42,8 +42,10 @@ A real-time system that replays EEG brainwave data, classifies mental state with
 - **Python 3.10+**
 - **Spotify Premium** account with the Spotify desktop/mobile app open on at least one device
 - **Groq API key** — free at [console.groq.com](https://console.groq.com) (100 000 tokens/day)
-- **EEG dataset** — see Step 2 below
+- **EEG dataset** — download before Step 3 (see below)
 - **make** — pre-installed on macOS and Linux; Windows users: no make needed, use the `.bat` scripts below
+
+**Running without hardware:** The system works out of the box by replaying the EEG CSV file — no Arduino or electrodes required. To use live hardware (Arduino + BioAmp EXG Pill), follow [HARDWARE_SETUP.md](HARDWARE_SETUP.md) after completing the software setup below.
 
 ---
 
@@ -63,17 +65,32 @@ make setup
 
 ---
 
-### Step 2 — Configure credentials
+### Step 2 — Download the EEG dataset
+
+1. Go to [kaggle.com/datasets/birdy654/eeg-brainwave-dataset-mental-state](https://www.kaggle.com/datasets/birdy654/eeg-brainwave-dataset-mental-state)
+2. Click **Download** (you need a free Kaggle account)
+3. Extract the ZIP and copy `eeg_mental_state.csv` into the `data/` folder:
+
+```
+eeg-music-system/
+└── data/
+    └── eeg_mental_state.csv   ← place it here
+```
+
+---
+
+### Step 3 — Configure credentials
 
 Open `.env` and fill in every field:
 
-| Variable | Where to get it |
-|----------|----------------|
-| `SPOTIFY_CLIENT_ID` | [Spotify Developer Dashboard](https://developer.spotify.com/dashboard) → your app → Settings |
-| `SPOTIFY_CLIENT_SECRET` | Same place |
-| `SPOTIFY_REDIRECT_URI` | Set to exactly `http://127.0.0.1:8888/callback` in your Spotify app settings **and** in `.env` |
-| `SPOTIFY_WINS_PLAYLIST_ID` | Open any playlist in Spotify → share → copy link → the ID is the string after `/playlist/` |
-| `GROQ_API_KEY` | [console.groq.com](https://console.groq.com) → API Keys → Create |
+| Variable | Required | Where to get it |
+|----------|----------|----------------|
+| `SPOTIFY_CLIENT_ID` | ✓ | [Spotify Developer Dashboard](https://developer.spotify.com/dashboard) → your app → Settings |
+| `SPOTIFY_CLIENT_SECRET` | ✓ | Same place |
+| `SPOTIFY_REDIRECT_URI` | ✓ | Set to exactly `http://127.0.0.1:8888/callback` in your Spotify app settings **and** in `.env` |
+| `SPOTIFY_WINS_PLAYLIST_ID` | ✓ | Open any playlist in Spotify → share → copy link → the ID is the string after `/playlist/` |
+| `GROQ_API_KEY` | ✓ | [console.groq.com](https://console.groq.com) → API Keys → Create |
+| `LASTFM_API_KEY` | optional | [last.fm/api](https://www.last.fm/api/account/create) — enables Tier 1 similar-artist discovery; system falls back to Tier 2 (LLM) if not set |
 
 **Spotify app setup (one time):**
 
@@ -86,7 +103,7 @@ Open `.env` and fill in every field:
 
 ---
 
-### Step 3 — Train the classifier
+### Step 4 — Train the classifier
 
 ```bash
 make train
@@ -106,7 +123,7 @@ Training only needs to run once. The next `make train` will skip if models alrea
 
 ---
 
-### Step 4 — Spotify OAuth (first run only)
+### Step 5 — Spotify OAuth (first run only)
 
 On the very first `make run`, spotipy needs to authenticate with Spotify:
 
@@ -120,7 +137,7 @@ spotipy saves a `.cache` token file and handles silent token refresh from then o
 
 ---
 
-### Step 5 — Run
+### Step 6 — Run
 
 ```bash
 make run
@@ -172,17 +189,26 @@ If Windows asks _"Do you want to allow this app to make changes?"_, click **Yes*
 
 ---
 
-### Step 3 — Configure your API keys
+### Step 3 — Download the EEG dataset
+
+1. Go to [kaggle.com/datasets/birdy654/eeg-brainwave-dataset-mental-state](https://www.kaggle.com/datasets/birdy654/eeg-brainwave-dataset-mental-state)
+2. Click **Download** (free Kaggle account required)
+3. Extract the ZIP and copy `eeg_mental_state.csv` into the `data\` folder inside the project
+
+---
+
+### Step 4 — Configure your API keys
 
 Open the `.env` file in Notepad (or any text editor) and fill in every field:
 
-| Variable | Where to get it |
-|----------|----------------|
-| `SPOTIFY_CLIENT_ID` | [Spotify Developer Dashboard](https://developer.spotify.com/dashboard) → your app → Settings |
-| `SPOTIFY_CLIENT_SECRET` | Same page as above |
-| `SPOTIFY_REDIRECT_URI` | Set to exactly `http://127.0.0.1:8888/callback` |
-| `SPOTIFY_WINS_PLAYLIST_ID` | Open any playlist in Spotify → Share → Copy link → the ID is the string after `/playlist/` |
-| `GROQ_API_KEY` | [console.groq.com](https://console.groq.com) → API Keys → Create |
+| Variable | Required | Where to get it |
+|----------|----------|----------------|
+| `SPOTIFY_CLIENT_ID` | ✓ | [Spotify Developer Dashboard](https://developer.spotify.com/dashboard) → your app → Settings |
+| `SPOTIFY_CLIENT_SECRET` | ✓ | Same page as above |
+| `SPOTIFY_REDIRECT_URI` | ✓ | Set to exactly `http://127.0.0.1:8888/callback` |
+| `SPOTIFY_WINS_PLAYLIST_ID` | ✓ | Open any playlist in Spotify → Share → Copy link → the ID is the string after `/playlist/` |
+| `GROQ_API_KEY` | ✓ | [console.groq.com](https://console.groq.com) → API Keys → Create |
+| `LASTFM_API_KEY` | optional | [last.fm/api](https://www.last.fm/api/account/create) — enables similar-artist discovery; leave blank to skip |
 
 **Spotify app setup (one time):**
 
@@ -195,7 +221,7 @@ Open the `.env` file in Notepad (or any text editor) and fill in every field:
 
 ---
 
-### Step 4 — Train the classifier
+### Step 5 — Train the classifier
 
 Double-click **`train.bat`** inside the project folder.
 
@@ -210,7 +236,7 @@ This only needs to run once. The models are saved and reused on every subsequent
 
 ---
 
-### Step 5 — Spotify login (first run only)
+### Step 6 — Spotify login (first run only)
 
 On the very first launch, Spotify needs to verify your identity:
 
@@ -223,7 +249,7 @@ Spotify saves your login token to a `.cache` file. You will not be asked again u
 
 ---
 
-### Step 6 — Start the system
+### Step 7 — Start the system
 
 Double-click **`run.bat`**.
 
@@ -295,14 +321,14 @@ The live dashboard at `http://127.0.0.1:5050` updates every 1 second.
 |---------|-------------|
 | `make setup` | Install dependencies, create `.env` from template |
 | `make train` | Train SGDClassifier (skip if models already exist) |
+| `make tinyml` | Train the TinyML classifier and regenerate `arduino/arduino_inference.h` |
 | `make ablation` | Run ablation study — saves results to `models/ablation_results.json` |
 | `make check` | Validate all required files are present |
 | `make run` | Start main loop + dashboard, open browser |
 | `make stop` | Stop all running processes |
 | `make logs` | Tail live logs from both processes |
 | `make status` | Show process state, credentials check, memory stats |
-| `make clean` | Remove caches, `state.json`, log files |
-| `make reset-memory` | Wipe `wins_log.json` (requires typing YES) |
+| `make clean` | Stop processes + wipe all session history (`wins_log.json`, `state.json`) |
 
 ---
 
@@ -336,6 +362,7 @@ The Spotify session timed out or the track ended before the win was logged. Open
 ```
 eeg-music-system/
 ├── Makefile                  ← build / run / stop targets (macOS/Linux)
+├── HARDWARE_SETUP.md         ← wiring, electrode placement, Arduino upload guide
 ├── run.sh                    ← starts both processes, traps Ctrl+C (macOS/Linux)
 ├── stop.sh                   ← kills processes from .pids (macOS/Linux)
 ├── launch.py                 ← cross-platform launcher (used by run.bat)
@@ -351,14 +378,19 @@ eeg-music-system/
 ├── state.json                ← live state written by main loop
 ├── wins_log.json             ← persistent memory log
 ├── data/
-│   └── eeg_mental_state.csv  ← EEG dataset (download separately)
+│   └── eeg_mental_state.csv  ← EEG dataset (download separately — see Step 2)
 ├── models/
 │   ├── classifier.joblib     ← trained SGDClassifier (created by make train)
 │   ├── scaler.joblib         ← feature scaler
 │   ├── class_means.json      ← per-class feature means for band scoring
 │   └── accuracy_log.json     ← persisted test accuracy + run metadata
+├── arduino/
+│   ├── mindtune_edge.ino     ← full stress classifier on Arduino (FFT + inference)
+│   ├── blink_detector.ino    ← raw ADC streamer for EOG double-blink skip
+│   └── arduino_inference.h   ← auto-generated model weights (make tinyml)
 ├── src/
 │   ├── train_classifier.py
+│   ├── train_tinyml.py       ← trains Arduino-compatible 5-feature model
 │   ├── run_ablation_study.py ← ablation: EEG-only vs Audio-only vs Multimodal
 │   ├── spotify_controller.py
 │   ├── agent.py
@@ -395,7 +427,7 @@ MindTune-OS uses two distinct neurological signatures to trigger interventions. 
 
 ### 1. Calm Mode: Stressed ➔ Calm
 *   **Biomarker:** ML-Classified Mental State (988 features).
-*   **The Trigger:** A rolling window of 5 ticks (10 seconds). Intervention fires if **≥ 3/5** readings are labeled `stressed`.
+*   **The Trigger:** A rolling window of 5 ticks (5 seconds). Intervention fires if **≥ 3/5** readings are labeled `stressed`.
 *   **The Logic:** Stress is identified by a specific signature of suppressed Alpha (8–12 Hz) and elevated Beta (13–30 Hz).
 *   **Efficacy:** The transition is considered successful when the ML prediction returns to `calm` or `relaxed`.
 
@@ -447,7 +479,7 @@ The BioAmp EXG Pill provides one differential channel. Multi-channel techniques 
 USB serial latency and Python `time.sleep` scheduling jitter prevent reliable event-locked ERP analysis. ErrP detection and SSVEP paradigms require sub-millisecond synchronisation and are not feasible with this stack.
 
 **5. Accuracy reproducibility requires the dataset**
-Test accuracy is persisted to `models/accuracy_log.json` after each training run. The file is gitignored (it is generated, not source). To reproduce the reported figure, run `make train` (the dataset is included in the repository).
+Test accuracy is persisted to `models/accuracy_log.json` after each training run. The file is gitignored (it is generated, not source). To reproduce the reported figure, download the dataset (Step 2) and run `make train`.
 
 ---
 
