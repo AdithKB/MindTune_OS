@@ -159,7 +159,7 @@ class CSVReplaySource(EEGSource):
 
         # Sliding window smoothing: rolling median of last N raw rows.
         # Reduces false stress triggers from single-sample noise spikes.
-        # Window of 3 readings = 6 s at the 2-second tick rate (PMC11089529).
+        # Window of 3 readings = 3 s at the 1-second tick rate (PMC11089529).
         self._smooth_buf    = []
         self._smooth_window = 3
 

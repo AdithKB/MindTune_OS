@@ -44,7 +44,7 @@ FEEDBACK_SIGNAL_PATH = os.path.join(BASE, '..', 'feedback_signal.json')
 SESSION_START  = time.time()
 ULTRADIAN_MINS = 90
 
-# Maximum loop iterations per session (~55 hours at 2 s/tick — effectively unlimited).
+# Maximum loop iterations per session (~277 hours at 1 s/tick — effectively unlimited).
 MAX_TICKS = 999_999
 
 # ── Sanity check mode ─────────────────────────────────────────────────────────

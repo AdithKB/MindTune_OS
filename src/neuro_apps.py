@@ -160,12 +160,12 @@ class BlinkDetector:
     ─────────────────
     People blink involuntarily ~15 times per minute. Reacting to every blink
     would trigger Spotify 15× per minute. The solution: require two blinks
-    within 2.5 seconds (a deliberate double-blink is rare involuntarily).
+    within 1.0 second (a deliberate double-blink is rare involuntarily).
     A single blink is ignored; only the double-blink pattern skips the track.
 
     BLINK PATTERN
     ─────────────
-        2 blinks within 2.5 s  →  next track (skip)
+        2 blinks within 1.0 s  →  next track (skip)
 
     ARDUINO SETUP
     ─────────────

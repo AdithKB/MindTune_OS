@@ -1,15 +1,15 @@
 """TinyML Edge Classifier — Training & Export Script.
 
 In plain English: this script trains a tiny version of the stress classifier
-that fits on an Arduino Uno (2 KB of SRAM, 32 KB of flash). Instead of using
-hundreds of frequency columns as features, it collapses them into just 5 EEG
-band-power values (Delta, Theta, Alpha, Beta, Gamma). The trained model is then
-exported as a C++ header file that the Arduino sketch includes directly — no
-Python or internet connection needed on the device.
+that fits on an Arduino Uno R4 Minima (Renesas RA4M1, ARM Cortex-M4F, 32 KB
+SRAM, 256 KB flash). Instead of using hundreds of frequency columns as features,
+it collapses them into just 5 EEG band-power values (Delta, Theta, Alpha, Beta,
+Gamma). The trained model is then exported as a C++ header file that the Arduino
+sketch includes directly — no Python or internet connection needed on the device.
 
 Trains a compact 5-feature SGDClassifier on EEG band-power data and exports it
 to a standalone C header (arduino_inference.h) for direct inclusion in the
-Arduino Uno R3 (.ino) sketch.
+Arduino Uno R4 Minima (.ino) sketch.
 
 Feature Engineering
 ───────────────────
@@ -38,8 +38,9 @@ Arduino Bin Alignment (128-point FFT @ 256 Hz → 2 Hz/bin)
 The Arduino sketch sums the same number of bins and divides by bin count to
 produce a mean magnitude — matching the Python mean aggregation here.
 
-SRAM note: model weights are embedded as literals in the generated C function
-and are placed in flash (program memory) by AVR-GCC, NOT in SRAM.
+SRAM note: model weights are embedded as literals in the generated C function.
+On ARM Cortex-M4 (R4 Minima), const data is stored in flash automatically —
+no PROGMEM macros needed (they compile as no-ops on ARM).
 """
 
 import os, json
@@ -228,9 +229,9 @@ header_lines = [
     f' * Classes : calm (0), relaxed (1), stressed (2)',
     f' * Accuracy: {accuracy * 100:.1f}% on 20% held-out test set',
     ' *',
-    ' * AVR NOTE: On ATmega328P, sizeof(double) == sizeof(float) == 4 bytes.',
-    ' *   score() uses double types; AVR-GCC compiles them as 4-byte floats.',
-    ' *   Model weight literals are placed in flash by AVR-GCC — NOT SRAM.',
+    ' * ARM NOTE: On Cortex-M4F (R4 Minima), double is 8 bytes and float is 4 bytes.',
+    ' *   score() uses double types for compatibility with arduinoFFT v1.9.x.',
+    ' *   const data is stored in flash automatically — no PROGMEM needed.',
     ' *',
     ' * C++ NOTE: score() is written without C99 compound literals so it',
     ' *   compiles cleanly under C++11 (used by the Arduino IDE for .ino files).',
@@ -244,12 +245,11 @@ header_lines = [
     ' */',
     '',
     '#pragma once',
-    '#include <avr/pgmspace.h>',
     '',
-    '/* Scaler parameters in flash (PROGMEM). Applied before calling score(). */',
+    '/* Scaler parameters (const → stored in flash on ARM). Applied before score(). */',
     '/* Formula: scaled[i] = (raw[i] - BAND_SCALER_MEAN[i]) / BAND_SCALER_SCALE[i] */',
-    f'static const float BAND_SCALER_MEAN[5]  PROGMEM = {{ {scaler_mean_str} }};',
-    f'static const float BAND_SCALER_SCALE[5] PROGMEM = {{ {scaler_scale_str} }};',
+    f'static const float BAND_SCALER_MEAN[5]  = {{ {scaler_mean_str} }};',
+    f'static const float BAND_SCALER_SCALE[5] = {{ {scaler_scale_str} }};',
     '',
     '/* Class label lookup (index = prediction_id from argmax of score output) */',
     f'static const char* const PRED_CLASSES[3] = {{ {classes_str} }};',
@@ -278,6 +278,6 @@ print()
 print("Next steps:")
 print("  1. Open arduino/mindtune_edge.ino in the Arduino IDE")
 print("  2. Install the arduinoFFT library (Sketch > Include Library > Manage Libraries)")
-print("  3. Upload to the Arduino Uno R3")
+print("  3. Upload to the Arduino Uno R4 Minima")
 print(f"  4. Verify serial output for [0.5×5] vector: "
       f"expected '{neutral_id},{max(neutral_proba):.2f}'")
