@@ -67,7 +67,7 @@ def index():
 @app.route('/state')
 def state():
     try:
-        with open(STATE_PATH) as f:
+        with open(STATE_PATH, encoding='utf-8') as f:
             return jsonify(json.load(f))
     except Exception:
         return jsonify(DEFAULT_STATE)
@@ -76,7 +76,7 @@ def state():
 @app.route('/memory')
 def memory():
     try:
-        with open(LOG_PATH) as f:
+        with open(LOG_PATH, encoding='utf-8') as f:
             log = json.load(f)
         return jsonify(log[-20:])
     except Exception:
@@ -87,7 +87,7 @@ def memory():
 def profile():
     """Average audio features of all wins — drives the calm audio profile card."""
     try:
-        with open(LOG_PATH) as f:
+        with open(LOG_PATH, encoding='utf-8') as f:
             log = json.load(f)
         wins = [e for e in log if e.get('status') == 'win' and e.get('audio_features')]
         if not wins:
@@ -108,7 +108,7 @@ def profile():
 def sessions():
     """Per-session win rate and average resolution time — drives the learning progress panel."""
     try:
-        with open(LOG_PATH) as f:
+        with open(LOG_PATH, encoding='utf-8') as f:
             log = json.load(f)
         buckets = {}
         for entry in log:
@@ -145,7 +145,7 @@ def sessions():
 def feedback():
     """Preference model insights — feedback counts, top/worst tags, phase."""
     try:
-        with open(FEEDBACK_LOG) as f:
+        with open(FEEDBACK_LOG, encoding='utf-8') as f:
             log = json.load(f)
         n_pos = sum(1 for e in log if e.get('feedback') == 1)
         n_neg = sum(1 for e in log if e.get('feedback') == 0)
@@ -206,7 +206,7 @@ def feedback_down():
 
 @app.route('/focus/on', methods=['POST'])
 def focus_on():
-    """Manually start Focus Mode (binaural beats at the model-predicted Hz)."""
+    """Manually start Focus Mode (instrumental music via Spotify)."""
     return _write_feedback_signal('focus_on')
 
 
@@ -218,7 +218,7 @@ def focus_off():
 
 @app.route('/focus/up', methods=['POST'])
 def focus_feedback_up():
-    """Signal that the current binaural frequency is helping focus."""
+    """Signal that the current focus track is helping concentration."""
     return _write_feedback_signal('focus_up')
 
 

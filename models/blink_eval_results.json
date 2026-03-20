@@ -1,0 +1,64 @@
+{
+  "run_at": "2026-03-20T00:42:59.601412+00:00",
+  "tests": [
+    {
+      "name": "valid_double_blink",
+      "description": "Two valid blinks (25 samples each, 300ms gap) \u2192 next_track",
+      "expected": [
+        "next_track"
+      ],
+      "actual": [
+        "next_track"
+      ],
+      "pass": true
+    },
+    {
+      "name": "noise_rejection",
+      "description": "5-sample pulse (too short, <13) \u2192 rejected",
+      "expected": [],
+      "actual": [],
+      "pass": true
+    },
+    {
+      "name": "squint_rejection",
+      "description": "150-sample pulse (too long, >102) \u2192 rejected",
+      "expected": [],
+      "actual": [],
+      "pass": true
+    },
+    {
+      "name": "single_blink_no_trigger",
+      "description": "One valid blink, then 1.5s silence (>1.0s window) \u2192 no action",
+      "expected": [],
+      "actual": [],
+      "pass": true
+    },
+    {
+      "name": "mixed_valid_noise",
+      "description": "One valid blink (25 samples) + one noise (5 samples) \u2192 no action",
+      "expected": [],
+      "actual": [],
+      "pass": true
+    },
+    {
+      "name": "boundary_minimum_duration",
+      "description": "Two blinks at minimum valid duration (13 samples each) \u2192 next_track",
+      "expected": [
+        "next_track"
+      ],
+      "actual": [
+        "next_track"
+      ],
+      "pass": true
+    }
+  ],
+  "passed": 6,
+  "failed": 0,
+  "total": 6,
+  "parameters": {
+    "adc_threshold": 11200,
+    "min_samples": 13,
+    "max_samples": 102,
+    "window_s": 1.0
+  }
+}

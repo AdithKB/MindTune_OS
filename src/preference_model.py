@@ -377,7 +377,7 @@ class PreferenceModel:
         # M-3: validate that the loaded value is a list — a corrupt or hand-edited
         # file may contain a JSON object {}, causing AttributeError on .append().
         try:
-            with open(self.log_path) as f:
+            with open(self.log_path, encoding='utf-8') as f:
                 data = json.load(f)
             return data if isinstance(data, list) else []
         except Exception:

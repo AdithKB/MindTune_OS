@@ -6,5 +6,4 @@ spotipy>=2.24
 python-dotenv>=1.0
 flask>=3.0
 groq>=0.9
-sounddevice>=0.4   # BinauralEngine: 40 Hz binaural beats for Focus Mode
 pyserial>=3.5      # BlinkDetector: live EOG blink detection via Arduino serial

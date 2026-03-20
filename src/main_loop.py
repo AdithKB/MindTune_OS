@@ -26,7 +26,7 @@ from spotify_controller import (get_spotify_client, get_active_device,
     get_win_artists, get_similar_artists, get_track_tags, get_artist_tags,
     get_calm_recommendations, get_focus_recommendations, play_track)
 from agent import get_music_suggestion
-from neuro_apps import FocusMetrics, BinauralEngine, BlinkDetector
+from neuro_apps import FocusMetrics, BlinkDetector
 from utils import atomic_write_json
 
 load_dotenv()
@@ -61,7 +61,7 @@ def _read_feedback_signal():
     if not os.path.exists(FEEDBACK_SIGNAL_PATH):
         return None
     try:
-        with open(FEEDBACK_SIGNAL_PATH) as f:
+        with open(FEEDBACK_SIGNAL_PATH, encoding='utf-8') as f:
             data = json.load(f)
         os.remove(FEEDBACK_SIGNAL_PATH)
         return data.get('action')   # 'up' or 'down'
@@ -106,19 +106,10 @@ win_artists   = get_win_artists(LOG_PATH)
 # ── Neural apps: Focus Mode + Blink Remote ────────────────────────────────────
 focus_metrics  = FocusMetrics()
 
-# BinauralEngine is kept for optional future use (e.g. blink remote trigger).
-# Focus Mode now uses Spotify music instead of binaural beats, so sounddevice
-# is no longer required for Focus Mode to function.
-try:
-    binaural = BinauralEngine()
-except ImportError:
-    binaural = None
-    print("neuro_apps: sounddevice not installed — Binaural features disabled.")
-
 # BlinkDetector translates deliberate blink patterns into Spotify actions.
-# port=None → demo/simulation mode (no Arduino needed).
+# port='auto' → auto-detects Arduino; falls back to demo mode if not found.
 try:
-    blink_detector = BlinkDetector(port=None)
+    blink_detector = BlinkDetector(port='auto')
     blink_detector.start()
 except Exception as _e:
     blink_detector = None
@@ -176,7 +167,7 @@ now_playing_info     = None  # cached; refreshed every 5 ticks to avoid blocking
 
 # Derive session number from existing log (new session = last recorded + 1)
 try:
-    with open(LOG_PATH) as _f:
+    with open(LOG_PATH, encoding='utf-8') as _f:
         _log = json.load(_f)
     session_number = max((e.get('session_number', 1) for e in _log), default=0) + 1
 except Exception:
@@ -791,13 +782,11 @@ try:
 except KeyboardInterrupt:
     print("\nShutting down cleanly...")
     eeg_source.close()
-    if binaural:
-        binaural.close()
     if blink_detector:
         blink_detector.close()
 
     try:
-        with open(LOG_PATH) as f:
+        with open(LOG_PATH, encoding='utf-8') as f:
             full_log = json.load(f)
         wins_this_session = [e for e in full_log
                              if e.get('session_number') == session_number

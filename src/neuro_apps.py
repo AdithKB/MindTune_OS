@@ -1,19 +1,18 @@
 """neuro_apps.py — MindTune-OS Experimental Neural Applications
 
-In plain English: this module adds two new BCI modes on top of the existing
+In plain English: this module adds two BCI features on top of the existing
 Calm Mode, using only a single EEG electrode and no extra sensors.
 
-  FOCUS MODE (FocusMetrics + BinauralEngine)
-  ───────────────────────────────────────────
+  FOCUS MODE (FocusMetrics)
+  ─────────────────────────
   Monitors the θ/β (theta/beta) brainwave ratio — a well-studied attention
-  biomarker. When theta rises above beta (mind wandering), Spotify is paused
-  and 40 Hz binaural beats play instead. 40 Hz is the gamma band frequency
-  associated with focused attention and working memory.
+  biomarker. When theta rises above beta (mind wandering), Focus Mode
+  triggers instrumental/lo-fi music via Spotify to aid concentration.
 
   BLINK REMOTE (BlinkDetector)
   ────────────────────────────
   Detects deliberate double-blinks from the raw EOG voltage spike on a single
-  frontal electrode (Fp1). Two blinks within 2.5 seconds → skip current track.
+  frontal electrode (Fp1). Two blinks within 1.0 second → skip current track.
   Single blinks are ignored (involuntary blinks average ~15/min so a single
   blink is almost certainly not deliberate). No arming step needed.
 
@@ -21,19 +20,16 @@ Classes
 ───────
   FocusMetrics    — θ/β ratio helper. Uses band_scores from eeg_source;
                     no new hardware needed.
-  BinauralEngine  — 40 Hz stereo binaural beats via sounddevice.
-                    Dependency: pip install sounddevice
   BlinkDetector   — EOG double-blink detector for track skipping via Arduino serial.
                     Dependency: pip install pyserial
                     (or run without hardware using port=None for demo mode)
 
 Quick-start
 ───────────
-  1. pip install sounddevice pyserial
-  2. Connect stereo headphones (binaural beats need separate L/R channels).
-  3. Find your Arduino port: /dev/cu.usbmodem* on macOS, COM3 on Windows,
+  1. pip install pyserial
+  2. Find your Arduino port: /dev/cu.usbmodem* on macOS, COM3 on Windows,
      /dev/ttyUSB0 on Linux.
-  4. See main_loop_integration_guide() at the bottom of this file for
+  3. See main_loop_integration_guide() at the bottom of this file for
      the exact lines to add to main_loop.py.
 """
 
@@ -51,12 +47,6 @@ try:
     _NUMPY_OK = True
 except ImportError:
     _NUMPY_OK = False
-
-try:
-    import sounddevice as sd
-    _SD_OK = True
-except ImportError:
-    _SD_OK = False
 
 try:
     import serial as _serial_mod
@@ -139,7 +129,7 @@ class FocusMetrics:
 
         Use this exactly like stress_count in main_loop.py:
             if focus_metrics.inattention_count() >= 3 and not focus_mode_active:
-                binaural.start(beat_freq=40)
+                _enter_focus_mode()   # triggers Spotify instrumental music
                 focus_mode_active = True
         """
         return sum(1 for r in self._history if r > self.INATTENTION_THRESHOLD)
@@ -147,144 +137,6 @@ class FocusMetrics:
     def current_ratio(self):
         """Return the most recent θ/β ratio, or 1.0 if no history yet."""
         return self._history[-1] if self._history else 1.0
-
-
-# =============================================================================
-# BinauralEngine — 40 Hz stereo binaural beats
-# =============================================================================
-
-class BinauralEngine:
-    """Generates and streams 40 Hz binaural beats via sounddevice.
-
-    HOW BINAURAL BEATS WORK
-    ────────────────────────
-    Each ear hears a slightly different pure tone:
-        Left ear:  BASE_FREQ Hz              (default: 200 Hz)
-        Right ear: BASE_FREQ + beat_freq Hz  (default: 240 Hz)
-
-    The brain cannot physically hear 40 Hz through air (below the ~20 Hz
-    detection threshold), but it 'perceives' the 40 Hz difference between
-    the two ears as an internal beat. This is the 'frequency following
-    response' — brainwaves tend to synchronise toward the beat frequency.
-
-    Beat frequency guide:
-        4–8 Hz  (Theta) → calm, meditative
-        8–13 Hz (Alpha) → relaxed alertness
-        40 Hz   (Gamma) → focus, working memory (default for Focus Mode)
-
-    ⚠️ REQUIREMENT: Stereo headphones are ESSENTIAL. Speakers mix both
-    channels before reaching your ears, so the brain never receives two
-    separate frequencies and no beat is perceived.
-
-    USAGE
-    ─────
-        engine = BinauralEngine()
-        engine.start(beat_freq=40)   # begin 40 Hz focus beats
-        # ... later ...
-        engine.stop()                # stop beats (engine ready to restart)
-        engine.close()               # release sounddevice at session end
-
-    DEPENDENCIES
-    ────────────
-        pip install sounddevice numpy
-    """
-
-    SAMPLE_RATE  = 44100   # Hz — standard audio CD quality
-    BASE_FREQ    = 200     # Hz — carrier tone (comfortable mid frequency)
-    CHUNK_FRAMES = 1024    # samples per sounddevice callback (~23 ms at 44100 Hz)
-    VOLUME       = 0.15    # amplitude 0.0–1.0; 0.15 is gentle background level
-
-    def __init__(self):
-        if not _NUMPY_OK or not _SD_OK:
-            raise ImportError(
-                "BinauralEngine requires numpy and sounddevice.\n"
-                "Run: pip install numpy sounddevice"
-            )
-        self._stream      = None    # sd.OutputStream, created fresh on each start()
-        self._playing     = False
-        self._beat_freq   = 40      # Hz; set by start()
-        self._phase_L     = 0.0    # continuous phase accumulator, left channel
-        self._phase_R     = 0.0    # continuous phase accumulator, right channel
-        self._lock        = threading.Lock()
-
-    def start(self, beat_freq=40):
-        """Begin streaming binaural beats.
-
-        Calling start() while already playing is a safe no-op.
-
-        Args:
-            beat_freq: Hz difference between left and right ears.
-                       40 → gamma (focus), 10 → alpha (calm), 4 → theta (sleep)
-        """
-        with self._lock:
-            if self._playing:
-                return
-            self._beat_freq = beat_freq
-            self._phase_L   = 0.0
-            self._phase_R   = 0.0
-            self._stream = sd.OutputStream(
-                samplerate = self.SAMPLE_RATE,
-                channels   = 2,          # stereo: index 0 = left, index 1 = right
-                dtype      = 'float32',
-                blocksize  = self.CHUNK_FRAMES,
-                callback   = self._audio_callback,
-            )
-            self._stream.start()
-            self._playing = True
-        print(f"BinauralEngine: started  "
-              f"L={self.BASE_FREQ} Hz | R={self.BASE_FREQ + beat_freq} Hz | "
-              f"beat={beat_freq} Hz | vol={self.VOLUME}")
-
-    def stop(self):
-        """Stop streaming. The engine can be started again with start()."""
-        with self._lock:
-            if not self._playing:
-                return
-            self._stream.stop()
-            self._stream.close()
-            self._stream  = None
-            self._playing = False
-        print("BinauralEngine: stopped")
-
-    def close(self):
-        """Stop and release all resources. Call once at session end."""
-        self.stop()
-
-    @property
-    def is_playing(self):
-        """True while binaural beats are streaming."""
-        return self._playing
-
-    # ── Audio callback (runs on sounddevice's internal audio thread) ───────────
-
-    def _audio_callback(self, outdata, frames, time_info, status):
-        """sounddevice calls this function every CHUNK_FRAMES samples (~23 ms).
-
-        It fills `outdata` with the next `frames` stereo samples and returns.
-        Using phase accumulators (not index-based sin) keeps the tone perfectly
-        continuous across chunk boundaries — no audible 'clicks' at seams.
-
-        This function is called from sounddevice's audio thread, NOT the main
-        thread. It must never block, allocate memory slowly, or call Python I/O.
-        """
-        # Angular step per sample = 2π × frequency / sample_rate
-        step_L = 2.0 * math.pi * self.BASE_FREQ                   / self.SAMPLE_RATE
-        step_R = 2.0 * math.pi * (self.BASE_FREQ + self._beat_freq) / self.SAMPLE_RATE
-
-        # Build sample arrays for both channels.
-        # np.arange gives [0, 1, ..., frames-1] so each sample gets the correct
-        # phase offset from the running phase accumulator.
-        t = np.arange(frames, dtype=np.float32)
-        left_wave  = np.sin(self._phase_L + t * step_L).astype(np.float32) * self.VOLUME
-        right_wave = np.sin(self._phase_R + t * step_R).astype(np.float32) * self.VOLUME
-
-        outdata[:, 0] = left_wave
-        outdata[:, 1] = right_wave
-
-        # Advance phase accumulators and wrap to [0, 2π] to prevent float
-        # precision degradation during very long sessions (> several hours).
-        self._phase_L = (self._phase_L + frames * step_L) % (2.0 * math.pi)
-        self._phase_R = (self._phase_R + frames * step_R) % (2.0 * math.pi)
 
 
 # =============================================================================
@@ -302,7 +154,7 @@ class BlinkDetector:
     in the 10-20 EEG system — just above the eyebrows).
 
     At 256 Hz, a voluntary blink creates 13–100 consecutive samples above a
-    threshold (~700/1023 ADC counts for a typical BioAmp EXG Pill setup).
+    threshold (auto-calibrated at startup for BioAmp EXG Pill on R4 Minima 14-bit ADC).
 
     WHY COMMAND MODE?
     ─────────────────
@@ -344,23 +196,25 @@ class BlinkDetector:
     """
 
     # ── Blink detection thresholds (calibrated for BioAmp EXG Pill at 256 Hz) ──
-    ADC_THRESHOLD     = 700    # raw ADC counts above which a sample is 'in a blink'
+    # Default for 14-bit ADC (0–16383), 5V reference on R4 Minima.
+    # EXG Pill powered from 5V per Upside Down Labs specs.
+    # auto_calibrate() overrides this with a measured value at startup.
+    ADC_THRESHOLD_DEFAULT = 11200
+    ADC_THRESHOLD     = 11200  # runtime value — updated by auto_calibrate()
     BLINK_MIN_SAMPLES = 13     # minimum samples — shorter events are EMG noise (~50 ms)
     BLINK_MAX_SAMPLES = 102    # maximum for a valid blink (~400 ms @ 256 Hz); longer = squint, ignore
     PATTERN_WINDOW_S  = 1.0    # seconds in which a second blink must arrive to trigger skip
     # 1.0 s covers deliberate double-blinks (IBI 200–600 ms + blink2 ~400 ms = ≤1 s).
-    # The old value of 2.5 s was for the arming-based design and is too wide here:
-    # at 15 involuntary blinks/min (Poisson), a 2.5 s window gives ~46% false-trigger
-    # probability per blink; 1.0 s reduces that to ~22 %, which is workable.
 
     BAUD_RATE = 115200
+    CALIBRATION_SECONDS = 4    # seconds of baseline + blink data to collect
 
-    def __init__(self, port=None):
+    def __init__(self, port='auto'):
         """
         Args:
-            port: serial port path, e.g. '/dev/cu.usbmodem1401' (macOS),
-                  'COM3' (Windows), '/dev/ttyUSB0' (Linux).
-                  Pass None to run in demo/simulation mode (no Arduino needed).
+            port: 'auto'  — auto-detect Arduino serial port (plug-and-play).
+                  '/dev/cu.usbmodem1401' — explicit port path.
+                  None    — demo/simulation mode (no Arduino needed).
         """
         self._port     = port
         self._sim_mode = (port is None)
@@ -369,26 +223,147 @@ class BlinkDetector:
         self._running  = False
 
         # ── Blink state machine variables ────────────────────────────────────
-        # These are shared between the reader thread and the timer threads.
-        # _state_lock protects all of them from concurrent modification.
-        self._in_blink          = False  # True while a blink event is ongoing
-        self._blink_count       = 0      # samples seen in the current blink event
-        self._blinks_seen       = 0      # valid blinks counted in current pattern window
-        self._pattern_start     = 0.0   # time.time() when the first blink in the pattern arrived
+        self._in_blink          = False
+        self._blink_count       = 0
+        self._blinks_seen       = 0
+        self._pattern_start     = 0.0
         self._state_lock        = threading.Lock()
 
-        # Detected actions (strings) go into this queue.
-        # get_action() pops one per tick — safe to call from the main thread.
         self._action_queue = queue.Queue()
 
         if self._sim_mode:
             print("BlinkDetector: DEMO MODE (port=None) — "
                   "simulated actions will fire every 20–40 s for testing.")
 
+    # ── Auto-detect Arduino serial port ──────────────────────────────────────
+
+    @staticmethod
+    def _auto_detect_port():
+        """Scan for an Arduino serial port. Returns port path or None.
+
+        Looks for common Arduino USB identifiers across macOS, Linux, Windows.
+        Prefers ports with 'usbmodem' or 'ttyACM' (Arduino R4/R3) in the name.
+        """
+        if not _SERIAL_OK:
+            return None
+        try:
+            from serial.tools import list_ports
+            candidates = []
+            for p in list_ports.comports():
+                desc = (p.description or '').lower()
+                hwid = (p.hwid or '').lower()
+                name = (p.device or '').lower()
+                # Arduino R4 Minima shows as "USB Serial Device" or has Renesas VID
+                is_arduino = any(kw in desc for kw in ('arduino', 'serial', 'usbmodem', 'ttyacm'))
+                is_arduino = is_arduino or any(kw in name for kw in ('usbmodem', 'ttyacm', 'ttyusb'))
+                is_arduino = is_arduino or '2341' in hwid  # Arduino VID
+                is_arduino = is_arduino or '1a86' in hwid  # CH340 (common clone)
+                if is_arduino:
+                    candidates.append(p.device)
+            return candidates[0] if candidates else None
+        except Exception:
+            return None
+
+    # ── Auto-calibration ─────────────────────────────────────────────────────
+
+    def _auto_calibrate(self):
+        """Read ADC samples to learn baseline and set threshold automatically.
+
+        Phase 1 (2s): Sit still → measure baseline noise ceiling (max value).
+        Phase 2 (2s): Blink several times → measure blink peak.
+        Threshold = midpoint between baseline ceiling and blink peak.
+
+        Falls back to ADC_THRESHOLD_DEFAULT if calibration fails.
+        """
+        import sys
+        hz = 250  # approximate sample rate from blink_detector.ino
+
+        print("\n" + "="*55)
+        print("  BLINK CALIBRATION — takes 4 seconds")
+        print("="*55)
+
+        # Phase 1: baseline
+        print("  Phase 1/2: Sit still, eyes open, DON'T blink...")
+        sys.stdout.flush()
+        baseline_samples = self._read_adc_samples(self.CALIBRATION_SECONDS // 2, hz)
+        if len(baseline_samples) < 50:
+            print("  Calibration: not enough samples — using default threshold.")
+            return
+
+        baseline_mean = sum(baseline_samples) / len(baseline_samples)
+        baseline_max  = max(baseline_samples)
+
+        # Phase 2: blinks
+        print("  Phase 2/2: Now BLINK 3-4 times deliberately...")
+        sys.stdout.flush()
+        blink_samples = self._read_adc_samples(self.CALIBRATION_SECONDS // 2, hz)
+        if len(blink_samples) < 50:
+            print("  Calibration: not enough samples — using default threshold.")
+            return
+
+        blink_peak = max(blink_samples)
+
+        # Compute threshold = midpoint between baseline noise ceiling and blink peak
+        if blink_peak <= baseline_max * 1.2:
+            # Blinks didn't produce a clear spike — fall back to default
+            print(f"  Calibration: blink peak ({blink_peak}) not clearly above "
+                  f"baseline ({baseline_max}) — using default threshold {self.ADC_THRESHOLD_DEFAULT}.")
+            BlinkDetector.ADC_THRESHOLD = self.ADC_THRESHOLD_DEFAULT
+            return
+
+        threshold = int((baseline_max + blink_peak) / 2)
+        BlinkDetector.ADC_THRESHOLD = threshold
+        self.ADC_THRESHOLD = threshold
+
+        print(f"  Baseline mean={baseline_mean:.0f}, max={baseline_max}")
+        print(f"  Blink peak={blink_peak}")
+        print(f"  → Threshold set to {threshold}")
+        print("="*55 + "\n")
+
+    def _read_adc_samples(self, seconds, approx_hz):
+        """Read raw ADC integers from serial for a given duration."""
+        samples = []
+        deadline = time.time() + seconds
+        while time.time() < deadline:
+            try:
+                line = self._serial.readline().decode('ascii', errors='ignore').strip()
+                if not line:
+                    continue
+                val = int(line)
+                samples.append(val)
+            except (ValueError, UnicodeDecodeError):
+                continue
+            except Exception:
+                break
+        return samples
+
     def start(self):
-        """Open the serial port (if live) and start the background reader thread."""
+        """Open the serial port (if live) and start the background reader thread.
+
+        If port='auto', scans for Arduino. If found, runs a 4-second calibration
+        to set the blink threshold from your actual hardware signal.
+        """
         if self._running:
             return
+
+        # ── Auto-detect port if requested ────────────────────────────────────
+        if self._port == 'auto':
+            if not _SERIAL_OK:
+                print("BlinkDetector: pyserial not installed — falling back to DEMO MODE.")
+                self._sim_mode = True
+                self._port = None
+            else:
+                detected = self._auto_detect_port()
+                if detected:
+                    print(f"BlinkDetector: auto-detected Arduino on {detected}")
+                    self._port = detected
+                    self._sim_mode = False
+                else:
+                    print("BlinkDetector: no Arduino detected — falling back to DEMO MODE.")
+                    print("  (Plug in your Arduino and restart to use live hardware.)")
+                    self._sim_mode = True
+                    self._port = None
+
         self._running = True
 
         if not self._sim_mode:
@@ -400,6 +375,14 @@ class BlinkDetector:
             self._serial = _serial_mod.Serial(
                 self._port, self.BAUD_RATE, timeout=1.0)
             print(f"BlinkDetector: connected to {self._port} @ {self.BAUD_RATE} baud")
+
+            # Wait for Arduino boot (R4 resets on serial open)
+            time.sleep(2.0)
+            self._serial.reset_input_buffer()
+
+            # Run auto-calibration
+            self._auto_calibrate()
+
             self._thread = threading.Thread(
                 target=self._reader_thread,
                 daemon=True,
@@ -442,9 +425,12 @@ class BlinkDetector:
             return None
 
     def inject_blink_spike(self):
-        """Simulate a single raw EEG voltage spike (EOG)."""
-        for _ in range(25): self._process_sample(950)
-        for _ in range(15): self._process_sample(100)
+        """Simulate a single raw EEG voltage spike (EOG).
+
+        Values scaled for 14-bit ADC (0–16383): high=15200 (~93%), low=1600 (~10%).
+        """
+        for _ in range(25): self._process_sample(15200)
+        for _ in range(15): self._process_sample(1600)
         return True
 
     def simulate_double_blink(self):
@@ -464,7 +450,7 @@ class BlinkDetector:
     def _reader_thread(self):
         """Reads raw ADC integers from serial, one per line, at ~256 Hz.
 
-        Expected Arduino output format: "512\\n", "487\\n", "1021\\n", etc.
+        Expected Arduino output format: "8192\\n", "7800\\n", "15000\\n", etc. (14-bit ADC)
         Non-integer lines (e.g. Arduino boot message "MindTune-OS...") are ignored.
         """
         while self._running:
@@ -585,20 +571,19 @@ def main_loop_integration_guide():
 
     STEP 1 — Import the classes (add near the top of main_loop.py)
     ──────────────────────────────────────────────────────────────
-        from neuro_apps import FocusMetrics, BinauralEngine, BlinkDetector
+        from neuro_apps import FocusMetrics, BlinkDetector
 
     STEP 2 — Instantiate the objects (after sp = get_spotify_client())
     ──────────────────────────────────────────────────────────────────
         focus_metrics  = FocusMetrics()
-        binaural       = BinauralEngine()
 
-        # port=None → demo mode (no Arduino needed for testing)
-        blink_detector = BlinkDetector(port=None)
+        # port='auto' → auto-detects Arduino; falls back to demo if not found
+        blink_detector = BlinkDetector(port='auto')
         blink_detector.start()
 
     STEP 3 — Add a focus_mode_active global (near other runtime state)
     ──────────────────────────────────────────────────────────────────
-        focus_mode_active = False   # True while binaural beats are playing
+        focus_mode_active = False   # True while Focus Mode music is playing
 
     STEP 4 — Add to the main loop tick body (after band_scores is set)
     ──────────────────────────────────────────────────────────────────
@@ -607,26 +592,15 @@ def main_loop_integration_guide():
         inattention = focus_metrics.inattention_count()
 
         if inattention >= 3 and not focus_mode_active and not music_active:
-            # Attention is slipping — pause Spotify and play binaural beats.
-            # music_active guard prevents Focus Mode competing with Calm Mode.
-            try:
-                sp.pause_playback()
-            except Exception:
-                pass   # no active playback — that's fine
-            binaural.start(beat_freq=40)
+            # Attention is slipping — trigger instrumental music via Spotify.
+            _enter_focus_mode()
             focus_mode_active = True
-            status_message    = f"Focus Mode: 40 Hz binaural beats (θ/β={focus_metrics.current_ratio():.1f})"
-            print(f"FOCUS MODE ON  | θ/β={focus_metrics.current_ratio():.2f} | inattention={inattention}/5")
+            print(f"FOCUS MODE ON  | θ/β={focus_metrics.current_ratio():.2f}")
 
         elif inattention <= 1 and focus_mode_active:
-            # Attention restored — resume Spotify, stop binaural beats.
-            binaural.stop()
+            # Attention restored — exit Focus Mode.
+            _exit_focus_mode(reason='improved')
             focus_mode_active = False
-            status_message    = "Focus restored — resuming music..."
-            try:
-                sp.start_playback()
-            except Exception:
-                pass
             print(f"FOCUS MODE OFF | θ/β={focus_metrics.current_ratio():.2f}")
 
         # ── Blink Remote: double-blink → skip track ──────────────────
@@ -642,7 +616,6 @@ def main_loop_integration_guide():
 
     STEP 6 — Clean up on exit (in the except KeyboardInterrupt block)
     ──────────────────────────────────────────────────────────────────
-        binaural.close()
         blink_detector.close()
     """
     print(guide)

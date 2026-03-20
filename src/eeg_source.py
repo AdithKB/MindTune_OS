@@ -191,7 +191,7 @@ class CSVReplaySource(EEGSource):
         # Per-class means for deviation scoring (written by train_classifier.py)
         means_path = os.path.join(BASE, '..', 'models', 'class_means.json')
         try:
-            with open(means_path) as f:
+            with open(means_path, encoding='utf-8') as f:
                 self.class_means = json.load(f)
             print("CSVReplaySource: class means loaded for band attribution.")
         except Exception:
@@ -321,84 +321,8 @@ class CSVReplaySource(EEGSource):
 #     3. Re-run: python src/train_classifier.py --data your_recording.csv
 #     4. The new classifier.joblib will work with your hardware's signal profile.
 #
-# class BrainFlowSource(EEGSource):
-#     """Live EEG from any BrainFlow-compatible device.
-#
-#     Usage (replace CSVReplaySource in main_loop.py):
-#         source = BrainFlowSource(board_id=22)           # Muse 2
-#         source = BrainFlowSource(board_id=-1)           # Synthetic (no headset)
-#         source = BrainFlowSource(board_id=1,            # OpenBCI Ganglion
-#                                  serial_port='/dev/ttyUSB0')
-#     """
-#     WINDOW_SAMPLES = 512   # samples per reading (≈2 s at 256 Hz)
-#
-#     def __init__(self, board_id, serial_port=''):
-#         from brainflow.board_shim import BoardShim, BrainFlowInputParams
-#         from brainflow.data_filter import DataFilter, FilterTypes, DetrendOperations
-#         self._BoardShim      = BoardShim
-#         self._DataFilter     = DataFilter
-#         self._FilterTypes    = FilterTypes
-#         self._DetrendOps     = DetrendOperations
-#
-#         params = BrainFlowInputParams()
-#         params.serial_port = serial_port
-#
-#         self.board    = BoardShim(board_id, params)
-#         self.board_id = board_id
-#         self.board.prepare_session()
-#         self.board.start_stream()
-#
-#         self.classifier = joblib.load(
-#             os.path.join(BASE, '..', 'models', 'classifier.joblib'))
-#         self.scaler = joblib.load(
-#             os.path.join(BASE, '..', 'models', 'scaler.joblib'))
-#
-#         self.eeg_channels = BoardShim.get_eeg_channels(board_id)
-#         print(f"BrainFlowSource: streaming from board_id={board_id} "
-#               f"({len(self.eeg_channels)} EEG channels)")
-#
-#     def next_reading(self):
-#         data = self.board.get_current_board_data(self.WINDOW_SAMPLES)
-#         sample_rate = self._BoardShim.get_sampling_rate(self.board_id)
-#
-#         band_powers = {}
-#         for ch in self.eeg_channels:
-#             signal = data[ch].copy()
-#             # Remove DC offset
-#             self._DataFilter.detrend(signal,
-#                 self._DetrendOps.CONSTANT.value)
-#             # Bandpass 1–50 Hz to remove EMG and slow drift
-#             self._DataFilter.perform_bandpass(
-#                 signal, sample_rate, 1.0, 50.0, 4,
-#                 self._FilterTypes.BUTTERWORTH.value, 0)
-#             # Notch filter at 50/60 Hz (mains hum)
-#             self._DataFilter.perform_bandstop(
-#                 signal, sample_rate, 48.0, 52.0, 4,
-#                 self._FilterTypes.BUTTERWORTH.value, 0)
-#
-#             for band_name, lo_x10, hi_x10 in _BAND_RANGES:
-#                 lo = lo_x10 / 10.0
-#                 hi = min(hi_x10 / 10.0, sample_rate / 2 - 1)
-#                 pwr = self._DataFilter.get_band_power(
-#                     signal, sample_rate, lo, hi)
-#                 band_powers.setdefault(band_name, []).append(pwr)
-#
-#         # Average band powers across channels
-#         avg_powers = {b: sum(v)/len(v) for b, v in band_powers.items()}
-#
-#         # TODO: Transform avg_powers into the feature vector schema
-#         # expected by the trained scaler/classifier (freq_XYZ_C columns).
-#         # Until you re-train on your own hardware data, classification
-#         # results will be unreliable. Use board_id=-1 (synthetic) for
-#         # testing the pipeline end-to-end without a headset.
-#         #
-#         # Placeholder — returns calm until feature alignment is done:
-#         band_scores = {b: min(1.0, max(0.0, v / 50.0))
-#                        for b, v in avg_powers.items()}
-#         prediction = 'calm'   # replace with: self.classifier.predict(...)
-#         return prediction, band_scores
-#
-#     def close(self):
-#         self.board.stop_stream()
-#         self.board.release_session()
-#         print("BrainFlowSource: session released.")
+class BrainFlowSource(EEGSource):
+    """Hardware implementation for Muse/OpenBCI (Future Work)."""
+    def next_reading(self, audio_features=None):
+        raise NotImplementedError("Hardware streaming requires BrainFlow installation.")
+

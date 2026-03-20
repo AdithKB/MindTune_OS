@@ -22,7 +22,7 @@ def atomic_write_json(data, target_path):
     tmp_name = None
     try:
         dir_path = os.path.dirname(os.path.abspath(target_path))
-        with tempfile.NamedTemporaryFile('w', dir=dir_path, delete=False, suffix='.tmp') as tmp:
+        with tempfile.NamedTemporaryFile('w', dir=dir_path, delete=False, suffix='.tmp', encoding='utf-8') as tmp:
             tmp_name = tmp.name
             json.dump(data, tmp)
         os.replace(tmp_name, target_path)

@@ -1,7 +1,7 @@
 """Focus Mode preference model.
 
 Focus Mode now uses Spotify music (instrumental, lo-fi, mid-tempo) instead of
-binaural beats. The learning model is identical to the Calm Mode PreferenceModel
+focus music. The learning model is identical to the Calm Mode PreferenceModel
 but stored in a separate file so focus wins/fails don't pollute calm mode history.
 
 Everything — Phase 1 frequency scoring, Phase 2 SGD, partial_fit, get_insights() —

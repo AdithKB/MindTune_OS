@@ -181,7 +181,7 @@ test_result = {
     'classes'       : CLASSES,
 }
 tv_path = os.path.join(MODELS_DIR, 'tinyml_test_vector.json')
-with open(tv_path, 'w') as f:
+with open(tv_path, 'w', encoding='utf-8') as f:
     json.dump(test_result, f, indent=2)
 print(f"Test vector saved: {tv_path}")
 
@@ -262,7 +262,7 @@ header_lines = [
 ]
 header = '\n'.join(header_lines) + '\n'
 
-with open(HEADER_PATH, 'w') as f:
+with open(HEADER_PATH, 'w', encoding='utf-8') as f:
     f.write(header)
 print(f"Header written: {HEADER_PATH}")
 print(f"  score() function: {len(score_cpp)} chars, "

@@ -157,7 +157,7 @@ def save_results(clf, scaler, X_train, y_train, feature_cols, accuracy, n_test):
         'trained_at'      : datetime.datetime.now(datetime.timezone.utc).isoformat(),
     }
     ACCURACY_LOG_PATH = os.path.join(MODELS_DIR, 'accuracy_log.json')
-    with open(ACCURACY_LOG_PATH, 'w') as f:
+    with open(ACCURACY_LOG_PATH, 'w', encoding='utf-8') as f:
         json.dump(accuracy_log, f, indent=2)
     print(f"Saved: {ACCURACY_LOG_PATH}")
     print()
@@ -176,7 +176,7 @@ def save_results(clf, scaler, X_train, y_train, feature_cols, accuracy, n_test):
     for label in ['calm', 'relaxed', 'stressed']:
         mask = y_train == label
         class_means[label] = X_train[mask].mean().to_dict()
-    with open(MEANS_PATH, 'w') as f:
+    with open(MEANS_PATH, 'w', encoding='utf-8') as f:
         json.dump(class_means, f)
     print(f"Saved: {MEANS_PATH}")
     print()

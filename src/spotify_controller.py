@@ -99,7 +99,7 @@ def save_to_log(track_info, context, status, log_path):
              and either response_seconds (win) or seconds_played (failed)
     """
     try:
-        with open(log_path) as f:
+        with open(log_path, encoding='utf-8') as f:
             log = json.load(f)
     except Exception:
         log = []
@@ -172,7 +172,7 @@ def save_track_to_wins(sp, wins_playlist_id, context=None, track_info=None):
 def get_memory(log_path):
     """Reads wins_log.json and returns {'wins': [...], 'fails': [...]} as human-readable strings."""
     try:
-        with open(log_path) as f:
+        with open(log_path, encoding='utf-8') as f:
             log = json.load(f)
     except Exception:
         return {'wins': [], 'fails': []}
@@ -223,7 +223,7 @@ def get_win_artists(log_path):
     Used to seed Last.fm similar-artist lookups.
     """
     try:
-        with open(log_path) as f:
+        with open(log_path, encoding='utf-8') as f:
             log = json.load(f)
         seen   = set()
         result = []
@@ -335,7 +335,7 @@ def get_audio_profile(log_path):
     plus sample_count, or None if no wins have audio features yet.
     """
     try:
-        with open(log_path) as f:
+        with open(log_path, encoding='utf-8') as f:
             log = json.load(f)
         wins = [e for e in log if e.get('status') == 'win' and e.get('audio_features')]
         if not wins:
@@ -505,7 +505,7 @@ def play_track(sp, track_info):
 def get_wins_count(log_path):
     """Returns the number of WIN entries in wins_log.json."""
     try:
-        with open(log_path) as f:
+        with open(log_path, encoding='utf-8') as f:
             log = json.load(f)
         return sum(1 for e in log if e.get('status') == 'win')
     except Exception:
