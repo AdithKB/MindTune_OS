@@ -2,7 +2,7 @@
 
 **MSc Foundations of AI | National College of Ireland | H9FAI | March 2026**
 
-A real-time system that replays EEG brainwave data, classifies mental state with a trained SVM, and — when sustained stress is detected — uses an AI agent to search Spotify for calming music and play it automatically. Every outcome (win or failure) is logged, giving the agent an increasingly personalised model of what music works for each user.
+A real-time system that replays EEG brainwave data, classifies mental state with a trained SGD classifier, and — when sustained stress is detected — uses an AI agent to search Spotify for calming music and play it automatically. Every outcome (win or failure) is logged, giving the agent an increasingly personalised model of what music works for each user.
 
 ---
 
@@ -29,7 +29,7 @@ A real-time system that replays EEG brainwave data, classifies mental state with
 
 | Component | File | Role |
 |-----------|------|------|
-| ML Classifier | `src/train_classifier.py` | Trains SVM on EEG data, saves `models/` |
+| ML Classifier | `src/train_classifier.py` | Trains SGDClassifier on EEG data, saves `models/` |
 | Spotify Controller | `src/spotify_controller.py` | Auth, device, search, playback, memory log |
 | AI Agent | `src/agent.py` | Groq LLM generates search query from stress history + memory |
 | Main Loop | `src/main_loop.py` | Replays EEG row by row, runs intervention logic |
@@ -113,7 +113,7 @@ This runs the SGDClassifier training pipeline on the EEG dataset (completes in s
 
 ```
 Training SGDClassifier (log_loss)...
-Accuracy: 91.94%
+Accuracy: 92.94%
 Saved: models/classifier.joblib
 Saved: models/scaler.joblib
 Saved: models/class_means.json
@@ -228,7 +228,7 @@ Double-click **`train.bat`** inside the project folder.
 Expected output:
 ```
 Training SGDClassifier (log_loss)...
-Accuracy: 91.94%
+Accuracy: 92.94%
 Saved: models/classifier.joblib
 ```
 
