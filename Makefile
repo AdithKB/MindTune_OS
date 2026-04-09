@@ -97,7 +97,7 @@ check:
 	@$(PYTHON) src/main_loop.py --check
 
 # ── Run ───────────────────────────────────────────────────────────────────────
-run: clean
+run:
 	@if [ ! -f .env ]; then \
 		echo "ERROR: .env not found — run: make setup"; \
 		exit 1; \
@@ -106,11 +106,11 @@ run: clean
 		echo "ERROR: models/classifier.joblib missing — run: make train"; \
 		exit 1; \
 	fi
-	@bash run.sh
+	@$(PYTHON) launch.py
 
 # ── Stop ──────────────────────────────────────────────────────────────────────
 stop:
-	@bash stop.sh
+	@$(PYTHON) launch.py --stop
 
 # ── Logs ──────────────────────────────────────────────────────────────────────
 logs:
@@ -174,8 +174,9 @@ print(f'  Entries: {len(log)}  |  Wins: {wins}  |  Failed: {fails}') \
 
 # ── Clean — stops processes and wipes all session history ─────────────────────
 clean:
-	@bash stop.sh 2>/dev/null; true
+	@$(PYTHON) launch.py --stop 2>/dev/null; true
 	@echo "[]" > wins_log.json
 	@echo "[]" > feedback_log.json
 	@rm -f state.json feedback_signal.json
-	@echo "✓ Session history cleared"
+	@rm -f logs/*.log
+	@echo "✓ Session history and logs cleared"

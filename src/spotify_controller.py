@@ -1,13 +1,14 @@
 """Spotify and Last.fm integration for MindTune-OS.
 
 In plain English: this module handles everything related to music playback and
-music metadata. It talks to the Spotify API (search, play, get audio features)
+music metadata. It talks to the Spotify API (search, play)
 and the Last.fm API (get genre tags for tracks and artists). It also reads and
 writes wins_log.json — the persistent memory of which tracks helped reduce stress.
 """
 
 import os
 import json
+import time
 import datetime
 import tempfile
 import urllib.request
@@ -87,7 +88,15 @@ def get_now_playing(sp):
     artists     = result['item'].get('artists', [])
     artist_name = artists[0]['name'] if artists else 'Unknown Artist'
     track_uri   = result['item']['uri']
-    return {'track': track_name, 'artist': artist_name, 'uri': track_uri}
+    progress_ms = result.get('progress_ms', 0)
+    duration_ms = result['item'].get('duration_ms', 0)
+    return {
+        'track':       track_name,
+        'artist':      artist_name,
+        'uri':         track_uri,
+        'progress_ms': progress_ms,
+        'duration_ms': duration_ms
+    }
 
 
 def save_to_log(track_info, context, status, log_path):
@@ -117,8 +126,6 @@ def save_to_log(track_info, context, status, log_path):
     if status == 'win':
         entry['stress_after']     = context['stress_after']
         entry['response_seconds'] = context['response_seconds']
-        if context.get('audio_features'):
-            entry['audio_features'] = context['audio_features']
     else:
         entry['stress_after']  = context['stress_after']
         entry['seconds_played'] = context.get('seconds_played', 30)
@@ -267,13 +274,51 @@ def get_similar_artists(artist_name, api_key, limit=20):
         return []
 
 
-def search_and_play(sp, query):
-    """Searches Spotify for query, plays the first result. Returns track dict or None."""
-    try:
-        results = sp.search(q=query, type='track', limit=2)
-    except Exception as e:
-        print(f"Warning: Spotify search failed for '{query}': {e}")
+# Module-level rate-limit gate: when Spotify returns 429, all search_and_play
+# calls return None instantly until the cooldown expires. This prevents the
+# intervention loop from blocking the main loop for 9+ seconds per tick.
+_spotify_blocked_until = 0.0
+
+def is_spotify_rate_limited():
+    """Return True if we are currently in a Spotify 429 cooldown."""
+    return time.time() < _spotify_blocked_until
+
+def _set_spotify_blocked(retry_after_seconds=60):
+    global _spotify_blocked_until
+    _spotify_blocked_until = time.time() + retry_after_seconds
+    print(f"Spotify rate-limited — skipping all searches for {retry_after_seconds:.0f}s")
+
+
+def search_and_play(sp, query, retries=2):
+    """Searches Spotify for query, plays the first result. Returns track dict or None.
+    Fails immediately (no sleep) if currently rate-limited to keep the main loop fluid.
+    """
+    global _spotify_blocked_until
+
+    if is_spotify_rate_limited():
+        remaining = int(_spotify_blocked_until - time.time())
+        print(f"Spotify blocked ({remaining}s remaining) — skipping '{query}'")
         return None
+
+    for attempt in range(retries):
+        try:
+            results = sp.search(q=query, type='track', limit=2)
+            break
+        except Exception as e:
+            err_str = str(e)
+            if '429' in err_str:
+                # Extract Retry-After if present, else default to 60s cooldown
+                import re
+                match = re.search(r'Retry will occur after[:\s]+(\d+)', err_str)
+                cooldown = int(match.group(1)) if match else 60
+                _set_spotify_blocked(cooldown)
+                return None   # bail immediately — no point retrying
+            if attempt < retries - 1:
+                print(f"Warning: Spotify search failed for '{query}' (attempt {attempt+1}): {e}. Retrying...")
+                time.sleep(1)
+            else:
+                print(f"Warning: Spotify search failed for '{query}': {e}")
+                return None
 
     items = (results or {}).get('tracks', {}).get('items', [])
     if not items:
@@ -295,61 +340,19 @@ def search_and_play(sp, query):
         print("Warning: no active device — cannot start playback.")
         return None
 
-    try:
-        sp.start_playback(device_id=device_id, uris=[track_uri])
-        print(f"Now playing: '{track_name}' by {artist}")
-        return {'track': track_name, 'artist': artist, 'uri': track_uri}
-    except Exception as e:
-        print(f"Error starting playback: {e}")
-        return None
-
-
-def get_audio_features(sp, track_uri):
-    """Returns audio features dict for a track URI, or None on error.
-
-    Keys: tempo (BPM int), energy, valence, acousticness, instrumentalness (all 0-1 floats).
-    Uses GET /audio-features — not restricted by Spotify's Extended Access policy.
-    """
-    try:
-        result = sp.audio_features([track_uri])
-        if not result or not result[0]:
-            return None
-        f = result[0]
-        return {
-            'tempo':            round(f['tempo']),
-            'energy':           round(f['energy'], 2),
-            'valence':          round(f['valence'], 2),
-            'acousticness':     round(f['acousticness'], 2),
-            'instrumentalness': round(f['instrumentalness'], 2),
-        }
-    except Exception:
-        # audio-features endpoint is restricted for Development Mode apps
-        # (Spotify Extended Access policy, Nov 2024) — silently skipped.
-        return None
-
-
-def get_audio_profile(log_path):
-    """Averages audio features across all WIN entries that have them stored.
-
-    Returns dict with avg tempo/energy/valence/acousticness/instrumentalness
-    plus sample_count, or None if no wins have audio features yet.
-    """
-    try:
-        with open(log_path, encoding='utf-8') as f:
-            log = json.load(f)
-        wins = [e for e in log if e.get('status') == 'win' and e.get('audio_features')]
-        if not wins:
-            return None
-        keys = ['tempo', 'energy', 'valence', 'acousticness', 'instrumentalness']
-        profile = {}
-        for k in keys:
-            vals = [w['audio_features'][k] for w in wins if k in w.get('audio_features', {})]
-            if vals:
-                profile[k] = round(sum(vals) / len(vals), 2)
-        profile['sample_count'] = len(wins)
-        return profile
-    except Exception:
-        return None
+    for attempt in range(retries):
+        try:
+            sp.start_playback(device_id=device_id, uris=[track_uri])
+            print(f"Now playing: '{track_name}' by {artist}")
+            return {'track': track_name, 'artist': artist, 'uri': track_uri}
+        except Exception as e:
+            if attempt < retries - 1:
+                wait = min(2 ** attempt, 1)
+                print(f"Error starting playback (attempt {attempt+1}): {e}. Retrying in {wait}s...")
+                time.sleep(wait)
+            else:
+                print(f"Error starting playback after {retries} attempts: {e}")
+                return None
 
 
 def get_artist_tags(artist_name, api_key, limit=10):
@@ -424,82 +427,8 @@ def get_track_tags(track_name, artist_name, api_key, limit=10):
     return tags[:limit]
 
 
-def get_calm_recommendations(sp, target_energy=0.25, target_valence=0.4,
-                              target_acousticness=0.8, seed_genres=None, limit=10):
-    """Strategy 0: Low-energy, acoustic seeds for Calm Mode."""
-    if seed_genres is None:
-        seed_genres = ['ambient', 'classical', 'sleep']
-    try:
-        results = sp.recommendations(
-            seed_genres=seed_genres[:5],
-            target_energy=target_energy,
-            target_valence=target_valence,
-            target_acousticness=target_acousticness,
-            limit=limit,
-        )
-        tracks = []
-        for item in (results or {}).get('tracks', []):
-            if not item: continue
-            artists = item.get('artists', [])
-            tracks.append({
-                'track':  item['name'],
-                'artist': artists[0]['name'] if artists else 'Unknown Artist',
-                'uri':    item['uri'],
-            })
-        return tracks
-    except Exception as e:
-        print(f"Spotify recommendations unavailable: {e}")
-        return []
 
 
-def get_focus_recommendations(sp, target_energy=0.6, target_instrumentalness=0.8,
-                               target_valence=0.5, seed_genres=None, limit=10):
-    """Strategy 0 for Focus Mode: Mid-energy, highly instrumental seeds."""
-    if seed_genres is None:
-        seed_genres = ['lo-fi', 'techno', 'deep-house']
-    try:
-        results = sp.recommendations(
-            seed_genres=seed_genres[:5],
-            target_energy=target_energy,
-            target_instrumentalness=target_instrumentalness,
-            target_valence=target_valence,
-            limit=limit,
-        )
-        tracks = []
-        for item in (results or {}).get('tracks', []):
-            if not item: continue
-            artists = item.get('artists', [])
-            tracks.append({
-                'track':  item['name'],
-                'artist': artists[0]['name'] if artists else 'Unknown Artist',
-                'uri':    item['uri'],
-            })
-        return tracks
-    except Exception as e:
-        print(f"Focus recommendations unavailable: {e}")
-        return []
-
-
-def play_track(sp, track_info):
-    """Play a specific track dict {track, artist, uri} without a search step.
-
-    Used when we already have a concrete URI (e.g., from get_calm_recommendations).
-    Returns track_info on success, None on failure.
-    """
-    uri = track_info.get('uri', '')
-    if not uri:
-        return None
-    device_id = get_active_device(sp)
-    if device_id is None:
-        print("Warning: no active device — cannot start playback.")
-        return None
-    try:
-        sp.start_playback(device_id=device_id, uris=[uri])
-        print(f"Now playing (direct): '{track_info['track']}' by {track_info['artist']}")
-        return track_info
-    except Exception as e:
-        print(f"Error starting playback for '{track_info['track']}': {e}")
-        return None
 
 
 def get_wins_count(log_path):

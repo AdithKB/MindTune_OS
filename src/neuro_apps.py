@@ -424,6 +424,10 @@ class BlinkDetector:
         except queue.Empty:
             return None
 
+    # Alias so BlinkDetector and ArduinoSerialSource share the same method name,
+    # letting main_loop.py call _blink_ctrl.get_blink_action() regardless of mode.
+    get_blink_action = get_action
+
     def inject_blink_spike(self):
         """Simulate a single raw EEG voltage spike (EOG).
 
@@ -533,10 +537,6 @@ class BlinkDetector:
             # It will reset on the next tick or after the pattern window.
             # with self._state_lock: self._blinks_seen = 0 (removed instant reset)
 
-    def _commit_pattern(self, pattern_start_at_schedule):
-        """No longer used for triggering, but kept for interface compatibility."""
-        pass
-
     # ── Private: demo / simulation thread ─────────────────────────────────────
 
     def _sim_thread(self):
@@ -552,74 +552,3 @@ class BlinkDetector:
                 break
             print("BlinkDetector [DEMO]: simulated double-blink → 'next_track'")
             self._action_queue.put('next_track')
-
-
-# =============================================================================
-# main_loop.py integration guide
-# =============================================================================
-
-def main_loop_integration_guide():
-    """Print the minimal changes needed to wire neuro_apps into main_loop.py.
-
-    This is documentation-as-code — run this function to see the integration
-    steps printed to the terminal, or read it in the source below.
-    """
-    guide = """
-    ╔══════════════════════════════════════════════════════════════════╗
-    ║         main_loop.py Integration Guide — neuro_apps.py          ║
-    ╚══════════════════════════════════════════════════════════════════╝
-
-    STEP 1 — Import the classes (add near the top of main_loop.py)
-    ──────────────────────────────────────────────────────────────
-        from neuro_apps import FocusMetrics, BlinkDetector
-
-    STEP 2 — Instantiate the objects (after sp = get_spotify_client())
-    ──────────────────────────────────────────────────────────────────
-        focus_metrics  = FocusMetrics()
-
-        # port='auto' → auto-detects Arduino; falls back to demo if not found
-        blink_detector = BlinkDetector(port='auto')
-        blink_detector.start()
-
-    STEP 3 — Add a focus_mode_active global (near other runtime state)
-    ──────────────────────────────────────────────────────────────────
-        focus_mode_active = False   # True while Focus Mode music is playing
-
-    STEP 4 — Add to the main loop tick body (after band_scores is set)
-    ──────────────────────────────────────────────────────────────────
-        # ── Focus Mode: θ/β ratio detection ─────────────────────────
-        focus_metrics.update(band_scores)
-        inattention = focus_metrics.inattention_count()
-
-        if inattention >= 3 and not focus_mode_active and not music_active:
-            # Attention is slipping — trigger instrumental music via Spotify.
-            _enter_focus_mode()
-            focus_mode_active = True
-            print(f"FOCUS MODE ON  | θ/β={focus_metrics.current_ratio():.2f}")
-
-        elif inattention <= 1 and focus_mode_active:
-            # Attention restored — exit Focus Mode.
-            _exit_focus_mode(reason='improved')
-            focus_mode_active = False
-            print(f"FOCUS MODE OFF | θ/β={focus_metrics.current_ratio():.2f}")
-
-        # ── Blink Remote: double-blink → skip track ──────────────────
-        blink_action = blink_detector.get_action()
-        if blink_action == 'next_track' and music_active:
-            skip_requested = True
-            print("BLINK: double-blink detected — skipping track")
-
-    STEP 5 — Add focus_mode_active to the state snapshot (system_state dict)
-    ─────────────────────────────────────────────────────────────────────────
-        "focus_mode_active": focus_mode_active,
-        "theta_beta_ratio":  round(focus_metrics.current_ratio(), 2),
-
-    STEP 6 — Clean up on exit (in the except KeyboardInterrupt block)
-    ──────────────────────────────────────────────────────────────────
-        blink_detector.close()
-    """
-    print(guide)
-
-
-if __name__ == '__main__':
-    main_loop_integration_guide()

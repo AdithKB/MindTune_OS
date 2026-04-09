@@ -216,6 +216,26 @@ a:focus:not(:focus-visible) {
 }
 .sim-btn:hover { background: var(--border); color: var(--text2); }
 
+.topbar-tools {
+  display: flex; align-items: center; gap: var(--sp-4);
+}
+.tool-btn {
+  background: transparent; border: 1px solid var(--border);
+  color: var(--text3); font-size: 0.7rem; font-weight: 500;
+  padding: 3px var(--sp-8); border-radius: var(--radius-xs);
+  cursor: pointer; transition: all 0.15s; white-space: nowrap;
+}
+.tool-btn:hover { border-color: var(--text2); color: var(--text2); }
+
+.debug-btn {
+  background: rgba(239,68,68,0.1); border: 1px solid rgba(239,68,68,0.3);
+  color: #ef4444; font-size: 0.75rem; font-weight: 600;
+  padding: var(--sp-4) var(--sp-12); border-radius: var(--radius-xs);
+  cursor: pointer; transition: all 0.2s; display: flex; align-items: center; gap: 6px;
+}
+.debug-btn:hover { background: rgba(239,68,68,0.2); transform: translateY(-1px); }
+.debug-btn.active { background: #ef4444; color: white; }
+
 /* ── Mode chip ───────────────────────────────────────────────────── */
 .mode-chip {
   font-size: 0.75rem; font-weight: 600; padding: var(--sp-8) var(--sp-16);
@@ -267,6 +287,18 @@ a:focus:not(:focus-visible) {
   animation: bannerPulse 2.5s ease-in-out infinite;
 }
 #pending-win-banner.visible { display: flex; }
+
+.alert-banner {
+  display: none; align-items: center; justify-content: center; gap: var(--sp-8);
+  background: rgba(239,68,68,0.1); border: 1px solid rgba(239,68,68,0.3);
+  border-radius: var(--radius-sm); padding: var(--sp-8) var(--sp-16);
+  margin-bottom: var(--sp-8);
+  font-size: 0.85rem; font-weight: 700; color: #ef4444;
+  animation: alertPulse 1.5s ease-in-out infinite;
+}
+.alert-banner.visible { display: flex; }
+@keyframes alertPulse { 0%,100%{transform:scale(1)} 50%{transform:scale(1.02); opacity:0.8} }
+
 @keyframes bannerPulse { 0%,100%{opacity:1} 50%{opacity:0.6} }
 .pending-win-icon { font-size: 1rem; }
 
@@ -385,7 +417,7 @@ a:focus:not(:focus-visible) {
 .state-chip.other { color: var(--text3); background: transparent; border-color: var(--border); }
 
 .state-explain {
-  font-size: 0.75rem; color: var(--text3);
+  font-size: 0.78rem; color: var(--text2);
   margin-top: var(--sp-2); margin-bottom: var(--sp-8); max-width: 200px;
   line-height: 1.4;
 }
@@ -413,6 +445,22 @@ a:focus:not(:focus-visible) {
 .conf-badge span {
   color: var(--text); font-weight: 600;
   font-family: 'JetBrains Mono', monospace;
+}
+
+/* Neuro-metrics row: CLI + ADI */
+.neuro-metrics {
+  display: flex; gap: var(--sp-12); justify-content: center;
+  font-size: 0.72rem; color: var(--text3);
+  margin-bottom: var(--sp-8);
+}
+.neuro-metrics span {
+  background: var(--surface2); border: 1px solid var(--border);
+  border-radius: var(--radius-xs); padding: var(--sp-4) var(--sp-8);
+  cursor: default;
+}
+.neuro-metrics strong {
+  color: var(--text); font-family: 'JetBrains Mono', monospace; font-weight: 600;
+  margin-left: 3px;
 }
 
 /* EEG band power strip */
@@ -552,7 +600,7 @@ a:focus:not(:focus-visible) {
 .learning-badge .badge-text { margin-left: var(--sp-4); }
 
 .status-msg {
-  font-size: 0.8rem; color: var(--text3); font-style: italic;
+  font-size: 0.85rem; color: var(--text2); font-style: italic;
   margin-top: var(--sp-8); line-height: 1.5; word-break: break-word;
 }
 
@@ -793,10 +841,42 @@ details[open] > .secondary-grid {
 /* ═══════════════════════════════════════════════════════════════════
    FOOTER — subtle pipeline visualization
    ═══════════════════════════════════════════════════════════════════ */
+/* ── Live Pipeline Strip ───────────────────────────────────────────── */
+.pipeline-live {
+  display: flex; align-items: stretch; justify-content: center;
+  gap: 0; margin: 0 var(--sp-16) var(--sp-8);
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); overflow: hidden;
+}
+.pipeline-step {
+  flex: 1; display: flex; flex-direction: column; align-items: center;
+  justify-content: center; gap: 3px;
+  padding: var(--sp-8) var(--sp-4);
+  font-size: 0.7rem; color: var(--text3);
+  border-right: 1px solid var(--border);
+  transition: background 0.4s, color 0.3s;
+  min-width: 0;
+}
+.pipeline-step:last-child { border-right: none; }
+.pipeline-step .ps-icon { font-size: 1.2rem; line-height: 1; }
+.pipeline-step .ps-label { font-weight: 600; font-size: 0.65rem; letter-spacing: 0.04em; text-transform: uppercase; white-space: nowrap; }
+.pipeline-step .ps-value { font-family: 'JetBrains Mono', monospace; font-size: 0.7rem; color: var(--text2); min-height: 1em; }
+.pipeline-step.active {
+  background: rgba(16,185,129,0.08); color: var(--green);
+}
+.pipeline-step.active .ps-value { color: var(--green); }
+.pipeline-step.stressed {
+  background: rgba(244,63,94,0.08); color: var(--red);
+}
+.pipeline-step.stressed .ps-value { color: var(--red); }
+.pipeline-step.pulsing .ps-icon { animation: ps-pulse 1.2s ease-in-out infinite; }
+@keyframes ps-pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+
+/* Legacy footer strip — keep hidden on mobile, visible as subtle footer */
 .hiw-strip {
   display: flex; align-items: center; justify-content: center;
   gap: 0; padding: var(--sp-8) var(--sp-16); margin-top: var(--sp-8);
-  opacity: 0.35;
+  opacity: 0.2;
 }
 .hiw-step { font-size: 0.8rem; color: var(--text3); padding: var(--sp-4) var(--sp-12); }
 .hiw-arrow {
@@ -841,6 +921,7 @@ body.focus-mode::before {
   .session-pill { font-size: 0.6rem; }
   .blink-indicator { display: none; }
   .sim-btn { display: none; }
+  .topbar-tools { display: none; }
 
   /* ─── Banners ───────────────────────────────────────────────────── */
   #pending-win-banner, #focus-banner {

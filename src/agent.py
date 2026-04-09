@@ -53,7 +53,7 @@ def _fallback_query(interventions_tried):
     return _FALLBACK_QUERIES[0]
 
 
-def get_music_suggestion(stress_history, interventions_tried, memory, audio_profile=None, mode='calm'):
+def get_music_suggestion(stress_history, interventions_tried, memory, mode='calm'):
     """Queries the Groq LLM for a Spotify search query based on stress history and memory.
 
     Parameters:
@@ -108,20 +108,6 @@ def get_music_suggestion(stress_history, interventions_tried, memory, audio_prof
         prompt_lines.append("Past tracks that FAILED for this user (do NOT suggest similar):")
         for line in fails_shown:
             prompt_lines.append(line)
-        prompt_lines.append("")
-
-    if audio_profile and audio_profile.get('sample_count', 0) >= 2:
-        prompt_lines.append(
-            f"Audio profile of this user's winning tracks "
-            f"({audio_profile['sample_count']} wins averaged): "
-            f"~{audio_profile.get('tempo', '?')} BPM, "
-            f"energy={audio_profile.get('energy', '?')}, "
-            f"valence={audio_profile.get('valence', '?')}, "
-            f"acousticness={audio_profile.get('acousticness', '?')}."
-        )
-        prompt_lines.append(
-            "Prefer tracks with similar audio characteristics to this profile."
-        )
         prompt_lines.append("")
 
     if not wins_shown and not fails_shown:

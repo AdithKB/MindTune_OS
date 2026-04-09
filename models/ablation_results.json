@@ -1,5 +1,5 @@
 {
-  "run_at": "2026-03-18T21:37:29.314349+00:00",
+  "run_at": "2026-04-08T16:28:25.157828+00:00",
   "dataset": "birdy654/eeg-brainwave-dataset-mental-state",
   "model": "SGDClassifier(loss=log_loss, max_iter=1000, random_state=42)",
   "split": {

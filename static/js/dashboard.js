@@ -100,6 +100,39 @@ function simulateDoubleBlink() {
     .catch(e => console.warn('Double-blink simulation failed', e));
 }
 
+function forceStress() {
+  fetch('/feedback/force_stress', { method: 'POST' })
+    .then(() => {
+      const btn = document.getElementById('force-stress-btn');
+      if (btn) {
+        btn.classList.add('active');
+        setTimeout(() => btn.classList.remove('active'), 1000);
+      }
+    })
+    .catch(e => console.error('Force stress failed:', e));
+}
+
+function recalibrateSensor() {
+  const btn = document.getElementById('recalibrate-btn');
+  if (btn) btn.disabled = true;
+  
+  fetch('/hardware/recalibrate', { method: 'POST' })
+    .then(() => {
+      if (btn) {
+        const originalText = btn.textContent;
+        btn.textContent = '🔄 Calibrating...';
+        setTimeout(() => {
+          btn.disabled = false;
+          btn.textContent = originalText;
+        }, 8000);
+      }
+    })
+    .catch(e => {
+      console.error('Recalibration failed:', e);
+      if (btn) btn.disabled = false;
+    });
+}
+
 function sendFeedback(action) {
   if (feedbackCooldown) return;
 
@@ -212,7 +245,7 @@ function updateState(data) {
           learningBadge.className = 'learning-badge phase-2';
         } else {
           const remaining = Math.max(0, 10 - entries);
-          learningBadge.innerHTML = `⭐ <span class="badge-text">Teaching AI: Need ${remaining} more clicks</span>`;
+          learningBadge.innerHTML = `⭐ <span class="badge-text">Training AI: ${remaining} more feedback${remaining === 1 ? '' : 's'} to activate ML</span>`;
           learningBadge.className = 'learning-badge phase-1';
         }
         learningBadge.style.display = 'block';
@@ -394,13 +427,16 @@ function updateState(data) {
       const explainEl = document.getElementById('state-explain');
       if (explainEl) {
         let msg;
-        if (data.focus_mode_active)              msg = 'Focus mode — protecting attention';
-        else if (data.pending_win)               msg = 'Stress dropping — saving win...';
-        else if (data.music_active && stressCount >= 3) msg = 'Music intervening — stress should drop';
-        else if (stressCount >= 3)               msg = 'High stress — AI is selecting music...';
-        else if (data.prediction === 'relaxed')  msg = 'Deeply relaxed — optimal state';
-        else if (data.prediction === 'calm')     msg = 'Calm — brainwaves look good';
-        else                                     msg = 'Scanning brainwaves...';
+        if (data.focus_mode_active)                       msg = 'Focus mode — protecting attention';
+        else if (data.pending_win)                        msg = 'Stress dropping — saving win...';
+        else if (data.music_active && stressCount >= 3)   msg = 'Music intervening — stress should drop';
+        else if (stressCount >= 3)                        msg = 'High stress — AI is selecting music...';
+        else if (data.prediction === 'stressed')          msg = 'Elevated stress — monitoring closely';
+        else if (data.prediction === 'relaxed')           msg = 'Deeply relaxed — optimal state';
+        else if (data.prediction === 'calm')              msg = 'Calm — brainwaves look good';
+        else if (data.prediction === 'focused')           msg = 'Focused — cognitive load elevated';
+        else if (data.prediction === 'waiting')           msg = 'Waiting for EEG signal...';
+        else                                              msg = 'Monitoring brainwaves...';
         explainEl.textContent = msg;
       }
 
@@ -420,6 +456,35 @@ function updateState(data) {
       if (winsCountEl) winsCountEl.textContent = data.wins_count || 0;
       lastState.wins_count = data.wins_count;
     }
+
+    // ── Signal Integrity Warning ──────────────────────────────────
+    // signal_saturated is only set true by Arduino hardware source, never by CSV replay.
+    // When saturated: show banner, hide bands/neuro-metrics (values are meaningless noise).
+    // When not saturated (CSV or healthy hardware): show everything normally.
+    if (lastState.signal_saturated !== data.signal_saturated) {
+      const banner    = document.getElementById('saturation-banner');
+      const strip     = document.getElementById('band-strip');
+      const neuroEl   = document.getElementById('neuro-metrics');
+      const confBadge = document.getElementById('conf-badge');
+      const sat = !!data.signal_saturated;
+      if (banner)    sat ? banner.classList.add('visible')   : banner.classList.remove('visible');
+      if (strip)     strip.style.display     = sat ? 'none' : '';
+      if (neuroEl)   neuroEl.style.display   = sat ? 'none' : '';
+      if (confBadge) confBadge.style.display = sat ? 'none' : 'block';
+      lastState.signal_saturated = data.signal_saturated;
+    }
+
+    // ── Debug Mode ────────────────────────────────────────────────
+    const urlParams = new URLSearchParams(window.location.search);
+    const isDebug   = urlParams.has('debug');
+    if (lastState.isDebug !== isDebug) {
+      const debugBtn = document.getElementById('force-stress-btn');
+      if (debugBtn) {
+        debugBtn.style.display = isDebug ? 'flex' : 'none';
+      }
+      lastState.isDebug = isDebug;
+    }
+
     if (lastState.session_number !== data.session_number) {
       const sessionBadge = document.getElementById('session-badge');
       if (sessionBadge && data.session_number) {
@@ -492,7 +557,7 @@ function updateState(data) {
     if (lastState.triedKey !== triedKey) {
       const tagsEl = document.getElementById('tried-tags');
       if (tagsEl) {
-        const tried = (data.interventions_tried || []).filter(q => q);
+        const tried = [...new Set((data.interventions_tried || []).filter(q => q))];
         if (tried.length > 0) {
           tagsEl.innerHTML = [...tried].reverse().slice(0, 8)
             .map(q => `<span class="tried-tag">${escHtml(q)}</span>`).join('');
@@ -513,11 +578,26 @@ function updateState(data) {
       lastState.debug_msg = data.debug_msg;
     }
 
-    // ── Focus banner theta/beta ratio (updates every tick in focus mode) ──
-    if (lastState.thetaBeta !== data.theta_beta_ratio) {
+    // ── Cognitive Load Index (θ/β) + Alpha Dominance Index ───────────
+    const neuroKey = `${data.cognitive_load}-${data.alpha_dominance}`;
+    if (lastState.neuroKey !== neuroKey) {
+      // Focus banner: show CLI while in focus mode
       const bannerRatio = document.getElementById('focus-banner-ratio');
-      if (bannerRatio) bannerRatio.textContent = data.theta_beta_ratio ? `· θ/β ratio: ${data.theta_beta_ratio}` : '';
-      lastState.thetaBeta = data.theta_beta_ratio;
+      if (bannerRatio) bannerRatio.textContent = data.cognitive_load != null ? `· CLI: ${data.cognitive_load}` : '';
+
+      // Neuro-metrics row in brain card: show both indices
+      const neuroEl = document.getElementById('neuro-metrics');
+      if (neuroEl) {
+        if (data.cognitive_load != null || data.alpha_dominance != null) {
+          neuroEl.innerHTML =
+            `<span title="Cognitive Load Index (DASM Proxy) — θ/β ratio">CLI <strong>${data.cognitive_load ?? '—'}</strong></span>` +
+            `<span title="Alpha Dominance Index — α/(β+γ), single-channel approach motivation proxy (Davidson, 1988)">ADI <strong>${data.alpha_dominance ?? '—'}</strong></span>`;
+          neuroEl.style.display = 'flex';
+        } else {
+          neuroEl.style.display = 'none';
+        }
+      }
+      lastState.neuroKey = neuroKey;
     }
 
     // ── EEG weights (brainwave → music influence bars) ────────────
@@ -662,28 +742,60 @@ function updateBands(bandScores) {
   }
 }
 
-// ── Audio Profile ────────────────────────────────────────────────
-function renderProfile(profile) {
-  try {
-    const card  = document.getElementById('profile-card');
-    const chips = document.getElementById('profile-chips');
-    if (!card || !chips) return;
-    if (!profile || !profile.sample_count) { card.style.display = 'none'; return; }
-    card.style.display = 'block';
-    chips.innerHTML = [
-      { label: 'BPM',      val: profile.tempo },
-      { label: 'Energy',   val: profile.energy },
-      { label: 'Valence',  val: profile.valence },
-      { label: 'Acoustic', val: profile.acousticness },
-    ].map(c => `<div class="profile-chip">${c.label} <span>${c.val}</span></div>`).join('');
-  } catch (e) {
-    console.error("renderProfile error:", e);
+// ── Live Pipeline Strip ──────────────────────────────────────────
+function updatePipeline(data) {
+  const pred        = data.prediction || '—';
+  const stress      = data.stress_count ?? 0;
+  const musicOn     = !!data.music_active;
+  const wins        = data.wins_count ?? 0;
+  const fbTotal     = data.feedback_count ?? 0;
+  const connected   = pred !== 'waiting' && pred !== '—';
+
+  // Step 1 — EEG Reading (always active when connected)
+  const eegEl  = document.getElementById('ps-eeg');
+  const eegVal = document.getElementById('ps-eeg-val');
+  if (eegEl && eegVal) {
+    eegEl.classList.toggle('active', connected);
+    eegEl.classList.remove('stressed');
+    eegVal.textContent = connected ? `${stress}/5 stress` : '—';
+  }
+
+  // Step 2 — Classify (shows current brain state)
+  const clsEl  = document.getElementById('ps-classify');
+  const clsVal = document.getElementById('ps-classify-val');
+  if (clsEl && clsVal) {
+    const isStressed = pred === 'stressed';
+    clsEl.classList.toggle('active', connected && !isStressed);
+    clsEl.classList.toggle('stressed', connected && isStressed);
+    clsVal.textContent = connected ? pred.toUpperCase() : '—';
+  }
+
+  // Step 3 — Select Music (active while music is playing)
+  const musEl  = document.getElementById('ps-music');
+  const musVal = document.getElementById('ps-music-val');
+  if (musEl && musVal) {
+    musEl.classList.toggle('active', musicOn);
+    musEl.classList.toggle('stressed', false);
+    if (musicOn && data.now_playing && data.now_playing.track && data.now_playing.track !== 'Nothing playing') {
+      const t = data.now_playing.track;
+      musVal.textContent = t.length > 18 ? t.slice(0, 16) + '…' : t;
+    } else {
+      musVal.textContent = musicOn ? 'playing…' : 'waiting';
+    }
+  }
+
+  // Step 4 — Learn (active when we have wins or feedback)
+  const lrnEl  = document.getElementById('ps-learn');
+  const lrnVal = document.getElementById('ps-learn-val');
+  if (lrnEl && lrnVal) {
+    const hasData = wins > 0 || fbTotal > 0;
+    lrnEl.classList.toggle('active', hasData);
+    lrnEl.classList.remove('stressed');
+    lrnVal.textContent = hasData ? `${wins}W · ${fbTotal}FB` : 'no data yet';
   }
 }
 
-function pollProfile() {
-  fetch('/profile').then(r => r.json()).then(renderProfile).catch(() => {});
-}
+// Audio profile removed — Pure EEG mode, audio features not used by classifier
 
 // ── Chart.js timeline ────────────────────────────────────────────
 function initChart() {
@@ -695,7 +807,7 @@ function initChart() {
       data: {
         labels:   [],
         datasets: [{
-          data: [], borderWidth: 2, pointRadius: 0, tension: 0.35, fill: true,
+          data: [], borderWidth: 2, pointRadius: 0, tension: 0.5, fill: true,
           segment: {
             borderColor:     ctx => ctx.p1.parsed.y >= 3 ? '#f43f5e' : '#10b981',
             backgroundColor: ctx => ctx.p1.parsed.y >= 3
@@ -705,7 +817,7 @@ function initChart() {
         }]
       },
       options: {
-        animation: { duration: 250, easing: 'linear' },
+        animation: { duration: 600, easing: 'easeInOutCubic' },
         responsive: true,
         maintainAspectRatio: false, // Chart will now expand to fill the available panel height
         interaction: { mode: 'index', intersect: false },
@@ -749,7 +861,7 @@ window.onload = () => {
   // 5. Safety fallback: dismiss the startup loader after 4 s even if /state never responds.
   document.querySelectorAll('.panel, #timeline-chart').forEach(el => el.classList.add('skeleton'));
   initChart();
-  pollState(); pollMemory(); pollSessions(); pollProfile(); pollFeedback();
+  pollState(); pollMemory(); pollSessions(); pollFeedback();
   setInterval(heartbeat, 500);
   setTimeout(dismissStartupLoader, 4000);
 };
@@ -769,7 +881,7 @@ function updateTimeline(data) {
     ds.backgroundColor = accentFill;
     timelineChart.data.labels = data.timeline.map(p => p.t);
     ds.data                   = data.timeline.map(p => p.stress);
-    timelineChart.update('active'); 
+    timelineChart.update();
   } catch (e) {
     console.error("updateTimeline error:", e);
   }
@@ -850,6 +962,7 @@ function pollState() {
       try { updateTimeline(data); } catch(e) { console.error("Timeline update failed", e); }
       try { updateBands(data.band_scores); } catch(e) { console.error("Bands update failed", e); }
       try { updateState(data); } catch(e) { console.error("State update failed", e); }
+      try { updatePipeline(data); } catch(e) { console.error("Pipeline update failed", e); }
     })
     .catch(err => {
       console.warn("Poll State failed (offline?)", err);
@@ -877,6 +990,21 @@ function renderFeedback(d) {
     phaseEl.textContent = 'Phase 1 — Frequency scoring';
     phaseEl.className   = 'pref-phase-badge p1';
     hintEl.textContent  = remaining > 0 ? `Give ${remaining} more feedback entries to activate ML` : 'ML model will activate soon';
+  }
+
+  // Keep the learning badge in the Now Playing card in sync with the authoritative /feedback phase
+  const learningBadge = document.getElementById('learning-badge');
+  if (learningBadge) {
+    if (d.phase === 2) {
+      learningBadge.innerHTML   = '🧠 <span class="badge-text">Personalized AI Model Active</span>';
+      learningBadge.className   = 'learning-badge phase-2';
+      learningBadge.style.display = 'block';
+    } else {
+      const remaining = Math.max(0, 10 - (d.total || 0));
+      learningBadge.innerHTML   = `⭐ <span class="badge-text">Training AI: ${remaining} more feedback${remaining === 1 ? '' : 's'} to activate ML</span>`;
+      learningBadge.className   = 'learning-badge phase-1';
+      learningBadge.style.display = 'block';
+    }
   }
 
   const topTagsEl  = document.getElementById('top-tags');
@@ -913,5 +1041,4 @@ async function heartbeat() {
   pollState();
   if (heartbeatTick % 10 === 0) { pollMemory(); pollFeedback(); }
   if (heartbeatTick % 30 === 0) { pollSessions(); }
-  if (heartbeatTick % 60 === 0) { pollProfile(); }
 }

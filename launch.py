@@ -114,6 +114,28 @@ def kill_by_script(script_rel_path):
             pass  # pgrep not available on all Unix systems
 
 
+def kill_port(port):
+    """Kill any process listening on the given port (macOS/Linux only)."""
+    if IS_WINDOWS:
+        return  # handled implicitly by kill_by_script on Windows
+    try:
+        result = subprocess.run(
+            ["lsof", "-ti", f":{port}"],
+            capture_output=True, text=True,
+        )
+        for line in result.stdout.splitlines():
+            line = line.strip()
+            if line.isdigit():
+                pid = int(line)
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                    print(f"  Killed process on port {port} (PID {pid})")
+                except ProcessLookupError:
+                    pass
+    except FileNotFoundError:
+        pass  # lsof not available
+
+
 def load_pids():
     """Read {name: pid} from .pids file."""
     pids = {}
@@ -187,13 +209,26 @@ def do_start():
         print("       Run:  python setup.py   (or: pip install -r requirements.txt)")
         sys.exit(1)
 
-    # ── Kill stale processes ──────────────────────────────────────────────────
-    if PIDS_FILE.exists():
-        print("Stopping previous session...")
-        do_stop()
-        time.sleep(0.5)
+    # ── Kill stale processes (always, not just when .pids exists) ────────────
+    print("Clearing any stale processes...")
+    do_stop()           # kills by .pids if present + stray script processes
+    kill_port(5050)     # force-kill anything still on the port (e.g. after crash)
+    time.sleep(0.5)
 
+    # ── Clear logs and temporary state ────────────────────────────────────────
     LOGS_DIR.mkdir(exist_ok=True)
+    for log_file in LOGS_DIR.glob("*.log"):
+        try:
+            log_file.unlink()
+        except Exception:
+            pass
+    
+    state_file = ROOT / "state.json"
+    if state_file.exists():
+        try:
+            state_file.unlink()
+        except Exception:
+            pass
 
     # Set PYTHONPATH so src/ modules can import each other
     env_with_path = {**os.environ, "PYTHONPATH": str(ROOT / "src")}

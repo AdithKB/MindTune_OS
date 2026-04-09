@@ -47,6 +47,7 @@ DEFAULT_STATE = {
     "interventions_tried": [],
     "wins_count": 0,
     "status_message": "Open a second terminal and run the main loop",
+    "signal_saturated": False,
 }
 
 
@@ -62,6 +63,7 @@ def security_headers(response):
 @app.route('/')
 def index():
     return render_template('dashboard.html')
+
 
 
 @app.route('/state')
@@ -228,16 +230,22 @@ def focus_feedback_down():
     return _write_feedback_signal('focus_down')
 
 
-@app.route('/blink/spike', methods=['POST'])
-def blink_spike():
-    """Simulate a raw EEG voltage spike (EOG) for testing."""
-    return _write_feedback_signal('blink_spike')
-
-
 @app.route('/blink/double', methods=['POST'])
 def blink_double():
     """Simulate an intentional double-blink command for demo."""
     return _write_feedback_signal('double_blink')
+
+
+@app.route('/feedback/force_stress', methods=['POST'])
+def force_stress():
+    """Debug: Force stress level to 5/5 to trigger intervention."""
+    return _write_feedback_signal('force_stress')
+
+
+@app.route('/hardware/recalibrate', methods=['POST'])
+def recalibrate():
+    """Force the EEG sensor to re-run its blink calibration sequence."""
+    return _write_feedback_signal('recalibrate')
 
 
 if __name__ == '__main__':

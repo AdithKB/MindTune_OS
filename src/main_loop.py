@@ -16,15 +16,14 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 warnings.filterwarnings('ignore', category=UserWarning, module='sklearn')
 
 from dotenv import load_dotenv
-from eeg_source import CSVReplaySource
+from eeg_source import CSVReplaySource, ArduinoSerialSource
 from preference_model import PreferenceModel
 from focus_model import FocusPreferenceModel
 from spotify_controller import (get_spotify_client, get_active_device,
     get_now_playing, save_track_to_wins, save_to_log,
     get_memory, search_and_play, get_wins_count,
-    get_audio_features, get_audio_profile,
     get_win_artists, get_similar_artists, get_track_tags, get_artist_tags,
-    get_calm_recommendations, get_focus_recommendations, play_track)
+    is_spotify_rate_limited)
 from agent import get_music_suggestion
 from neuro_apps import FocusMetrics, BlinkDetector
 from utils import atomic_write_json
@@ -64,7 +63,7 @@ def _read_feedback_signal():
         with open(FEEDBACK_SIGNAL_PATH, encoding='utf-8') as f:
             data = json.load(f)
         os.remove(FEEDBACK_SIGNAL_PATH)
-        return data.get('action')   # 'up' or 'down'
+        return data.get('action')
     except Exception:
         # Corrupt or partially-written file — discard silently
         try:
@@ -75,8 +74,16 @@ def _read_feedback_signal():
 
 
 # ── EEG source ────────────────────────────────────────────────────────────────
-# Swap CSVReplaySource → BrainFlowSource here for live hardware (see eeg_source.py)
-eeg_source = CSVReplaySource()
+# Auto-detect: try Arduino (mindtune_edge.ino) first; fall back to CSV replay.
+# If Arduino is detected, BlinkDetector is disabled below (same serial port).
+_arduino_active = False
+try:
+    eeg_source     = ArduinoSerialSource(port='auto')
+    _arduino_active = True
+    print("EEG SOURCE: Arduino hardware (mindtune_edge.ino) — 74% TinyML accuracy")
+except Exception as _eeg_hw_err:
+    eeg_source = CSVReplaySource()
+    print(f"EEG SOURCE: CSV replay (no Arduino: {_eeg_hw_err})")
 
 # ── Personalization models ────────────────────────────────────────────────────
 pref_model  = PreferenceModel(log_path=os.path.join(BASE, '..', 'feedback_log.json'))
@@ -99,21 +106,28 @@ except Exception as _e:
 
 memory        = get_memory(LOG_PATH)
 wins_count    = get_wins_count(LOG_PATH)
-audio_profile = get_audio_profile(LOG_PATH)
 win_artists   = get_win_artists(LOG_PATH)
 
 
 # ── Neural apps: Focus Mode + Blink Remote ────────────────────────────────────
 focus_metrics  = FocusMetrics()
 
-# BlinkDetector translates deliberate blink patterns into Spotify actions.
-# port='auto' → auto-detects Arduino; falls back to demo mode if not found.
-try:
-    blink_detector = BlinkDetector(port='auto')
-    blink_detector.start()
-except Exception as _e:
-    blink_detector = None
-    print(f"neuro_apps: BlinkDetector failed to start ({_e}) — Blink Remote disabled.")
+# Blink remote — handled by ArduinoSerialSource when Arduino is active
+# (mindtune_edge.ino does blink detection on-device, alongside EEG inference).
+# Falls back to BlinkDetector with blink_detector.ino in CSV mode.
+# _blink_ctrl is the single object used everywhere blink actions are needed.
+if _arduino_active:
+    blink_detector = None          # not used; eeg_source handles blinks directly
+    _blink_ctrl    = eeg_source    # ArduinoSerialSource has the same blink API
+else:
+    try:
+        blink_detector = BlinkDetector(port='auto')
+        blink_detector.start()
+        _blink_ctrl = blink_detector
+    except Exception as _e:
+        blink_detector = None
+        _blink_ctrl    = None
+        print(f"neuro_apps: BlinkDetector failed to start ({_e}) — Blink Remote disabled.")
 
 
 def _build_lastfm_pool(artists, key):
@@ -123,7 +137,7 @@ def _build_lastfm_pool(artists, key):
     pool     = []
     seen_sim = set()
     for source in artists[-5:]:
-        similars = get_similar_artists(key, source, limit=5)
+        similars = get_similar_artists(source, key, limit=5)
         for s in similars:
             if s.lower() not in seen_sim:
                 pool.append((s, source))
@@ -140,7 +154,6 @@ last_intervention_time   = None          # Unix timestamp of last Spotify play
 intervention_start_stress = 0            # Stress count when music started
 current_track_info       = None          # Spotify metadata {track, artist, uri}
 current_track_tags       = []            # Genre/mood tags for current song
-current_audio_features   = None          # Spotify scalars {energy, valence, ...}
 current_query            = None          # The search query that found the song
 current_reason           = None          # Groq's explanation for the query
 explicit_feedback_given  = False         # Prevents saving two wins for one song
@@ -151,8 +164,6 @@ agent_reasoning          = "No intervention yet"
 status_message           = "Monitoring..."
 band_scores              = {}            # H-1: initialised at module level
 focus_mode_active        = False  # True while Focus Mode music is playing
-focus_mode_manual        = False  # True when user explicitly toggled focus on — prevents stress auto-cancel
-focus_cooldown_until     = 0.0    # auto-re-entry blocked until this Unix timestamp (set on manual off)
 last_blink_ts            = 0.0    # Unix timestamp of the last confirmed double-blink event
 last_debug_msg           = "System initialized"
 current_mode             = 'calm' # 'calm' or 'focus' — set at intervention start, persists through pending_win
@@ -185,7 +196,7 @@ def _reset_music_state(status_msg="Monitoring..."):
     """
     global music_active, pending_win, pending_win_response_s
     global last_intervention_time, current_query, current_reason
-    global current_track_info, current_track_tags, current_audio_features
+    global current_track_info, current_track_tags
     global intervention_start_stress, explicit_feedback_given, skip_requested
     global status_message
     music_active              = False
@@ -196,7 +207,6 @@ def _reset_music_state(status_msg="Monitoring..."):
     current_reason            = None
     current_track_info        = None
     current_track_tags        = []
-    current_audio_features    = None
     intervention_start_stress = 0
     explicit_feedback_given   = False
     skip_requested            = False
@@ -220,7 +230,6 @@ def _build_win_context(stress_count, response_seconds):
         'efficacy':         efficacy,
         'mode':             current_mode,
         'session_number':   session_number,
-        'audio_features':   current_audio_features,
     }
 
 
@@ -236,7 +245,7 @@ def _fetch_tags_for_track(track_info):
 def _handle_feedback(fb_type, now, current_band_scores):
     """Record 👍 or 👎 to the appropriate personalization model."""
     global explicit_feedback_given, skip_requested, last_intervention_time
-    global memory, wins_count, audio_profile, win_artists, lastfm_pool
+    global memory, wins_count, win_artists, lastfm_pool
 
     if not music_active or not current_track_info:
         return   # nothing to give feedback on
@@ -262,7 +271,6 @@ def _handle_feedback(fb_type, now, current_band_scores):
     # Reload local memory snapshot
     memory        = get_memory(LOG_PATH)
     wins_count    = get_wins_count(LOG_PATH)
-    audio_profile = get_audio_profile(LOG_PATH)
     win_artists   = get_win_artists(LOG_PATH)
     lastfm_pool   = _build_lastfm_pool(win_artists, LASTFM_KEY)
 
@@ -284,7 +292,7 @@ def _run_intervention(severity='mild', mode='calm'):
                   a focus-oriented prompt (instrumental, lo-fi, mid-tempo).
 
     Reads from module-level globals: lastfm_pool, tried_artists, band_scores,
-    sp, recent_predictions, interventions_tried, memory, audio_profile.
+    sp, recent_predictions, interventions_tried, memory.
     Returns (result_dict, query_str, reason_str) or (None, None, None).
 
     Strategy 0 — Spotify recommendations
@@ -294,39 +302,9 @@ def _run_intervention(severity='mild', mode='calm'):
     result = query = reason = None
     active_model = focus_model if mode == 'focus' else pref_model
 
-    # Strategy 0 — Spotify recommendations
-    # Calm Mode targets low-energy acoustic tracks.
-    # Focus Mode targets mid-energy instrumental tracks.
-    if mode == 'calm':
-        energy_target = 0.15 if severity == 'acute' else 0.25
-        recs = get_calm_recommendations(sp, target_energy=energy_target)
-        for rec in recs:
-            if rec['artist'].lower() in tried_artists:
-                continue
-            result = play_track(sp, rec)
-            if result:
-                tried_artists.add(rec['artist'].lower())
-                query  = f'spotify:recommendations (energy≤{energy_target:.2f})'
-                reason = (
-                    f'Spotify Recommendations: acoustically calm track '
-                    f'(energy≤{energy_target:.2f}, {"acute" if severity == "acute" else "mild"} stress mode)'
-                )
-                break
-    elif mode == 'focus':
-        recs = get_focus_recommendations(sp)
-        for rec in recs:
-            if rec['artist'].lower() in tried_artists:
-                continue
-            result = play_track(sp, rec)
-            if result:
-                tried_artists.add(rec['artist'].lower())
-                query  = 'spotify:recommendations (focus-instrumental)'
-                reason = 'Spotify Recommendations: mid-energy instrumental track for attention protection'
-                break
-
     # Strategy 1 — Last.fm similar-artist pool, preference-model ranked
-    # Guard: only enter if Strategy 0 did not already succeed.
-    if not result and lastfm_pool:
+    # (Strategy 0 was Spotify /recommendations — deprecated 2024-11-27, removed)
+    if not result and lastfm_pool and not is_spotify_rate_limited():
         # Collect eligible candidates (not yet tried this session)
         candidates = []
         for sim_artist, source_win in lastfm_pool:
@@ -348,10 +326,10 @@ def _run_intervention(severity='mild', mode='calm'):
                 break
 
     # Strategy 2 — Groq LLM agent
-    if not result:
+    if not result and not is_spotify_rate_limited():
         mode_val = 'focus' if mode == 'focus' else 'calm'
         query, reason = get_music_suggestion(recent_predictions, interventions_tried,
-                                             memory, audio_profile, mode=mode_val)
+                                             memory, mode=mode_val)
         ml_conf = active_model.score_candidate(query, [], band_scores)
         if active_model.ml_active:
             reason = f'{reason} · ML: {ml_conf:.0%} EEG match'
@@ -376,17 +354,16 @@ def _run_intervention(severity='mild', mode='calm'):
 
 
 def _enter_focus_mode():
-    """Start a Focus Mode music episode.
+    """Start a Focus Mode music episode (manual trigger only).
 
-    Identical state-machine to Calm Mode: calls _run_intervention(mode='focus')
-    which routes the Groq agent to suggest instrumental/lo-fi tracks instead of
-    calming music. The 30-second retry and pending_win logic handle everything
-    from here — no separate focus state machine needed.
+    Calls _run_intervention(mode='focus') which routes the Groq agent to suggest
+    instrumental/lo-fi tracks. The 30-second retry and pending_win logic handle
+    everything from here — no separate focus state machine needed.
     """
-    global focus_mode_active, focus_mode_manual, music_active, agent_reasoning, status_message
+    global focus_mode_active, music_active, agent_reasoning, status_message
     global last_intervention_time, intervention_start_stress, current_query
     global current_reason, current_track_info, current_track_tags
-    global current_audio_features, explicit_feedback_given, skip_requested
+    global explicit_feedback_given, skip_requested
     global pending_win, pending_win_response_s, interventions_tried, current_mode
 
     if focus_mode_active or music_active:
@@ -405,60 +382,37 @@ def _enter_focus_mode():
         current_reason            = reason
         current_track_info        = result
         current_track_tags        = _fetch_tags_for_track(result)
-        current_audio_features    = get_audio_features(sp, result['uri'])
         explicit_feedback_given   = False
         skip_requested            = False
         pending_win               = False
         pending_win_response_s    = 0
         agent_reasoning           = reason
         status_message            = f"Focus: {result['track']}"
-        print(f"FOCUS MODE ON  | θ/β={focus_metrics.current_ratio():.2f} "
-              f"| playing: {result['track']}")
+        print(f"FOCUS MODE ON  | playing: {result['track']}")
 
 
-def _exit_focus_mode(reason='manual'):
-    """Clear the focus_mode_active flag and optionally stop music."""
-    global focus_mode_active, focus_mode_manual, status_message, current_mode
+def _exit_focus_mode():
+    """Stop Focus Mode and return to Calm Mode (manual only)."""
+    global focus_mode_active, status_message, current_mode
 
     if not focus_mode_active:
         return
     focus_mode_active = False
-    focus_mode_manual = False   # clear manual flag whenever focus mode exits
-
-    if reason == 'stress':
-        # Stress takes priority — reset music so the calm intervention fires.
-        current_mode = 'calm'
-        if music_active:
-            try:
-                sp.pause_playback()
-            except Exception:
-                pass
-            _reset_music_state("Monitoring...")
-    elif reason == 'manual':
-        current_mode = 'calm'
-        if music_active:
-            try:
-                sp.pause_playback()
-            except Exception:
-                pass
-            _reset_music_state("Focus Mode off — monitoring...")
-    elif reason == 'improved':
-        # θ/β dropped back to normal — keep music playing.
-        # The pending_win / stress_count ≤ 1 branch will handle the win save.
-        current_mode = 'calm'
-        status_message = "Focus restored — continuing to play..."
-    # 'win' / 'fail': music state handled by existing pending_win / retry paths
-
-    print(f"FOCUS MODE OFF | reason={reason} | θ/β={focus_metrics.current_ratio():.2f}")
+    current_mode = 'calm'
+    if music_active:
+        try:
+            sp.pause_playback()
+        except Exception:
+            pass
+        _reset_music_state("Focus Mode off — monitoring...")
+    print("FOCUS MODE OFF")
 
 
 # ── Main loop ─────────────────────────────────────────────────────────────────
 try:
     for _tick in range(MAX_TICKS):
 
-        # Multimodal Fusion: pass current track's audio features so the
-        # classifier receives [EEG_scaled | audio_scalars] on every tick.
-        prediction, band_scores, confidence = eeg_source.next_reading(current_audio_features)
+        prediction, band_scores, confidence = eeg_source.next_reading()
 
         recent_predictions = (recent_predictions + [prediction])[-5:]
         stress_count = recent_predictions.count('stressed')
@@ -486,41 +440,30 @@ try:
             if fb in ('up', 'down'):
                 _handle_feedback(fb, now, band_scores)
             elif fb == 'focus_on':
-                # ── Optimistic Backend: Set mode IMMEDIATELY for UI snappiness ──
-                current_mode      = 'focus'
-                focus_mode_manual = True
-                
                 if music_active and not focus_mode_active:
                     try:
                         sp.pause_playback()
                     except Exception:
                         pass
                     _reset_music_state("Switching to Focus Mode...")
-                
                 _enter_focus_mode()
-                if not focus_mode_active:
-                    focus_mode_manual = False
-                    current_mode      = 'calm'
             elif fb == 'focus_off':
-                _exit_focus_mode(reason='manual')
-                focus_cooldown_until = time.time() + 90  # block auto-re-entry for 90 s
+                _exit_focus_mode()
             elif fb == 'focus_up':
                 _handle_feedback('up', now, band_scores)
             elif fb == 'focus_down':
                 _handle_feedback('down', now, band_scores)
-            elif fb == 'blink_spike':
-                if blink_detector:
-                    blink_detector.inject_blink_spike()
-                    count = blink_detector._blinks_seen
-                    if count == 1:
-                        last_debug_msg = "Blink 1/2 detected... click again!"
-                    else:
-                        last_debug_msg = f"Spike received ({time.strftime('%H:%M:%S')})"
-                else:
-                    last_debug_msg = "Spike received (but detector is OFF)"
-            elif fb == 'double_blink' and blink_detector:
+            elif fb == 'double_blink' and _blink_ctrl:
                 last_debug_msg = "Simulating double-blink..."
-                blink_detector.simulate_double_blink()
+                _blink_ctrl.simulate_double_blink()
+            elif fb == 'force_stress':
+                recent_predictions = ['stressed'] * 5
+                last_debug_msg = "⚡ FORCING STRESS (Debug Mode)"
+                debug_clear_tick = tick + 3
+            elif fb == 'recalibrate' and hasattr(eeg_source, 'recalibrate'):
+                last_debug_msg = "🔄 Recalibrating sensor..."
+                debug_clear_tick = tick + 15
+                eeg_source.recalibrate()
 
             if fb in ('up', 'focus_up') and music_active and current_track_info:
                 response_seconds = int(now - last_intervention_time) if last_intervention_time else 0
@@ -533,7 +476,6 @@ try:
                 })
                 memory        = get_memory(LOG_PATH)
                 wins_count    = get_wins_count(LOG_PATH)
-                audio_profile = get_audio_profile(LOG_PATH)
                 win_artists   = get_win_artists(LOG_PATH)
                 lastfm_pool   = _build_lastfm_pool(win_artists, LASTFM_KEY)
                 print(f"WIN saved immediately on 👍: '{current_track_info['track']}'")
@@ -546,42 +488,12 @@ try:
         if _tick % 5 == 0:
             now_playing_info = get_now_playing(sp)
 
-        # ── Focus Mode: θ/β ratio detection + learning ───────────────────────
+        # ── Focus Mode: update θ/β metric for dashboard display ─────────────
         focus_metrics.update(band_scores)
-        inattention = focus_metrics.inattention_count()
-
-        if stress_count >= 3 and focus_mode_active and not focus_mode_manual:
-            _exit_focus_mode(reason='stress')
-            timeline_markers.append({
-                't': tick - 1, 'type': 'intervention',
-                'label': 'Stress → Calm Mode'
-            })
-
-        elif focus_mode_active and inattention <= 1 and not focus_mode_manual:
-            _exit_focus_mode(reason='improved')
-            if music_active and not pending_win:
-                pending_win            = True
-                pending_win_response_s = int(now - last_intervention_time) if last_intervention_time else 0
-                last_intervention_time = now
-                track_name = current_track_info['track'][:30] if current_track_info else '?'
-                status_message = f"Focus restored — finish listening to '{track_name}'"
-                print(f"Attention restored — waiting for song to finish before saving win")
-            timeline_markers.append({
-                't': tick - 1, 'type': 'win',
-                'label': f'✓ Focus restored (θ/β={focus_metrics.current_ratio():.1f})'
-            })
-
-        elif not focus_mode_active and inattention >= 3 and not music_active and stress_count < 3 \
-                and time.time() >= focus_cooldown_until:
-            _enter_focus_mode()
-            timeline_markers.append({
-                't': tick - 1, 'type': 'intervention',
-                'label': f'🎯 Focus ON (θ/β={focus_metrics.current_ratio():.1f})'
-            })
 
         # ── Blink Remote: double-blink → skip current track ───────────────────
-        if blink_detector:
-            blink_action = blink_detector.get_action()
+        if _blink_ctrl:
+            blink_action = _blink_ctrl.get_blink_action()
             if blink_action == 'next_track':
                 last_debug_msg = "✓ DOUBLE-BLINK! Skipping..."
                 debug_clear_tick = tick + 3 
@@ -619,7 +531,6 @@ try:
                     current_reason         = reason
                     current_track_info     = result
                     current_track_tags     = _fetch_tags_for_track(result)
-                    current_audio_features = get_audio_features(sp, result['uri'])
                     status_message         = f"Skipped via Blink: {result['track']}"
                     print(f"BLINK REMOTE: Switch successful -> {result['track']}")
                 else:
@@ -645,7 +556,6 @@ try:
                     })
                     memory        = get_memory(LOG_PATH)
                     wins_count    = get_wins_count(LOG_PATH)
-                    audio_profile = get_audio_profile(LOG_PATH)
                     win_artists   = get_win_artists(LOG_PATH)
                     lastfm_pool   = _build_lastfm_pool(win_artists, LASTFM_KEY)
                     print(f"WIN saved: '{current_track_info['track']}' (song ended)")
@@ -657,6 +567,23 @@ try:
                     })
                     print(f"Song ended but skip was requested — not saved as win")
                     _reset_music_state("Skipped — monitoring...")
+
+        # ── Implicit Feedback Tracking ────────────────────────────────────────
+        # Gated implicit win: only record if user listens for >60s (or >90% of song)
+        # AND the EEG signal actually indicates low stress (stress_count <= 2).
+        # This prevents training on passive noise if the hardware is saturated.
+        if music_active and current_track_info and not explicit_feedback_given and not pending_win:
+            elapsed = now - last_intervention_time
+            
+            # Check 90% completion via Spotify progress data
+            progress_ratio = 0.0
+            if now_playing_info and now_playing_info.get('duration_ms', 0) > 0:
+                progress_ratio = now_playing_info['progress_ms'] / now_playing_info['duration_ms']
+            
+            if (elapsed >= 60 or progress_ratio >= 0.90) and stress_count <= 2:
+                print(f"IMPLICIT WIN detected: User listened to '{current_track_info['track']}' for {int(elapsed)}s with low stress.")
+                _handle_feedback('up', now, band_scores)
+                explicit_feedback_given = True  # don't record multiple times for same track
 
         # ── Calm Mode intervention logic ──────────────────────────────────────
         minutes_elapsed = (now - SESSION_START) / 60
@@ -679,7 +606,6 @@ try:
                 current_reason            = reason
                 current_track_info        = result
                 current_track_tags        = _fetch_tags_for_track(result)
-                current_audio_features    = get_audio_features(sp, result['uri'])
                 explicit_feedback_given   = False
                 skip_requested            = False
                 pending_win               = False
@@ -719,7 +645,6 @@ try:
                     current_reason         = reason
                     current_track_info     = result
                     current_track_tags     = _fetch_tags_for_track(result)
-                    current_audio_features = get_audio_features(sp, result['uri'])
                     status_message         = f"Switching: {result['track']}"
                     print(f"RETRY successful | stress={stress_count}/5 | new query='{query}'")
 
@@ -734,6 +659,13 @@ try:
         # ── Atomic state snapshot ─────────────────────────────────────────────
         pref_insights  = pref_model.get_insights()
         focus_insights = focus_model.get_insights()
+
+        # Alpha Dominance Index: corrolate of approach motivation/valence
+        # (Davidson, 1988) — single-channel proxy for positive approach.
+        alpha_val = band_scores.get('Alpha', 0.0)
+        beta_val  = band_scores.get('Beta', 0.0)
+        gamma_val = band_scores.get('Gamma', 0.0)
+        alpha_dominance = round(alpha_val / (beta_val + gamma_val + 1e-10), 2)
 
         system_state = {
             "prediction":          str(prediction),
@@ -757,7 +689,8 @@ try:
             "pending_win":         pending_win,
             "last_blink_ts":       last_blink_ts,
             "debug_msg":           last_debug_msg,
-            "theta_beta_ratio":    round(focus_metrics.current_ratio(), 2),
+            "cognitive_load":      round(focus_metrics.current_ratio(), 2),
+            "alpha_dominance":     alpha_dominance,
             "focus_ml_phase":      focus_insights['phase'],
             "focus_ml_entries":    focus_insights['total'],
             "feedback_count":      pref_insights['total'],
@@ -768,6 +701,7 @@ try:
             "eeg_weights":         pref_insights['eeg_weights'],
             "ml_top_tags":         pref_insights['ml_top_tags'],
             "ml_worst_tags":       pref_insights['ml_worst_tags'],
+            "signal_saturated":    eeg_source.is_signal_saturated(),
         }
 
         atomic_write_json(system_state, STATE_PATH)
@@ -782,7 +716,7 @@ try:
 except KeyboardInterrupt:
     print("\nShutting down cleanly...")
     eeg_source.close()
-    if blink_detector:
+    if blink_detector:   # only set in CSV mode
         blink_detector.close()
 
     try:

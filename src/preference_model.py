@@ -348,6 +348,7 @@ class PreferenceModel:
                 X_scaled = scaler.fit_transform(X_arr)
 
                 model = SGDClassifier(loss='log_loss', random_state=42,
+                                      learning_rate='constant', eta0=0.01,
                                       max_iter=1000, tol=1e-3)
                 model.fit(X_scaled, y)
                 self._ml_model        = model

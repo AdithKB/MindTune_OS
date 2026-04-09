@@ -52,11 +52,14 @@
       <button id="mode-chip" class="mode-chip calm" onclick="toggleFocusMode()"
               title="Switch between Calm and Focus modes"
               aria-label="Current mode: Calm. Click to switch.">Calm Mode</button>
-      <div id="blink-indicator" class="blink-indicator" title="Double-blink to skip track" aria-label="Blink remote status">
+      <div id="blink-indicator" class="blink-indicator" title="Double-blink your eyes to skip the current track" aria-label="Blink remote status">
         <div class="blink-pips"><div class="blink-pip"></div><div class="blink-pip"></div></div>
-        <span id="blink-text">Blink</span>
       </div>
-      <button onclick="simulateDoubleBlink()" class="sim-btn" title="Simulate double-blink" aria-label="Simulate double-blink skip">⚡</button>
+      <div class="topbar-tools" aria-label="Hardware tools">
+        <button onclick="simulateDoubleBlink()" class="tool-btn" title="Simulate double-blink (skip track)" aria-label="Simulate double-blink skip">⚡ Skip</button>
+        <button id="recalibrate-btn" onclick="recalibrateSensor()" class="tool-btn" title="Re-run blink calibration if the sensor drifted" aria-label="Recalibrate sensor">↺ Recal</button>
+      </div>
+      <button id="force-stress-btn" onclick="forceStress()" class="debug-btn" title="Force stress (Debug)" style="display:none;" aria-label="Force stress intervention">🔥 Force Stress</button>
     </nav>
   </header>
 
@@ -64,6 +67,10 @@
   <div id="pending-win-banner" role="status" aria-live="polite">
     <span class="pending-win-icon">🏆</span>
     Stress dropped — saving this as a win
+  </div>
+  <div id="saturation-banner" class="alert-banner" role="alert" aria-live="assertive">
+    <span class="alert-icon">⚠️</span>
+    SIGNAL SATURATED: Check electrode contact
   </div>
   <div id="focus-banner" role="status" aria-live="polite">
     <div class="focus-banner-dot"></div>
@@ -79,6 +86,30 @@
     </div>
     <span class="goal-label">System Goal</span>
     <div id="debug-msg" style="font-size:0.7rem; color:#fde047; font-weight:600; padding:2px 8px; background:rgba(0,0,0,0.2); border-radius:6px; display:none; white-space:nowrap;"></div>
+  </div>
+
+  <!-- ══ Live Pipeline Strip ════════════════════════════════════════ -->
+  <div class="pipeline-live" aria-label="System pipeline status">
+    <div class="pipeline-step pulsing" id="ps-eeg">
+      <span class="ps-icon">📡</span>
+      <span class="ps-label">EEG Reading</span>
+      <span class="ps-value" id="ps-eeg-val">—</span>
+    </div>
+    <div class="pipeline-step" id="ps-classify">
+      <span class="ps-icon">🧠</span>
+      <span class="ps-label">Classify</span>
+      <span class="ps-value" id="ps-classify-val">—</span>
+    </div>
+    <div class="pipeline-step" id="ps-music">
+      <span class="ps-icon">🎵</span>
+      <span class="ps-label">Select Music</span>
+      <span class="ps-value" id="ps-music-val">waiting</span>
+    </div>
+    <div class="pipeline-step" id="ps-learn">
+      <span class="ps-icon">📊</span>
+      <span class="ps-label">Learn</span>
+      <span class="ps-value" id="ps-learn-val">—</span>
+    </div>
   </div>
 
   <main>
@@ -97,6 +128,14 @@
                     fill="none" stroke-width="8"
                     stroke-dasharray="351.86" stroke-dashoffset="351.86"
                     transform="rotate(-90 70 70)" />
+            <!-- Threshold tick at 3/5 (60%) — where music intervention fires -->
+            <!-- 60% of 360° = 216°, starting from -90° → at 126° absolute -->
+            <line x1="70" y1="8" x2="70" y2="20"
+                  stroke="rgba(244,63,94,0.7)" stroke-width="2.5" stroke-linecap="round"
+                  transform="rotate(126 70 70)" />
+            <text x="70" y="5" text-anchor="middle" font-size="7"
+                  fill="rgba(244,63,94,0.6)" font-family="Inter,sans-serif"
+                  transform="rotate(126 70 70)">▲</text>
           </svg>
           <div class="gauge-center">
             <div id="gauge-val" class="gauge-val" aria-label="Stress level">0<span class="gauge-denom">/5</span></div>
@@ -110,6 +149,8 @@
         <div class="conf-badge" id="conf-badge" style="display:none;">
           Confidence: <span id="conf-val">0.00</span>
         </div>
+        <div id="neuro-metrics" class="neuro-metrics" style="display:none;"
+             aria-label="Cognitive Load Index and Alpha Dominance Index"></div>
         <div class="band-strip" id="band-strip" style="display:none;" aria-label="EEG band powers"></div>
       </div>
 
@@ -157,10 +198,7 @@
         <div id="learning-badge" class="learning-badge" role="status"></div>
         <div id="status-msg" class="status-msg" role="status"></div>
 
-        <div id="profile-card" class="profile-card" style="display:none;">
-          <div class="profile-title">Your calm audio profile</div>
-          <div class="profile-chips" id="profile-chips"></div>
-        </div>
+        <!-- Audio profile card removed — Pure EEG mode; audio features not used by classifier -->
       </div>
     </div>
 
@@ -177,7 +215,7 @@
     </div>
 
     <!-- ══ Secondary: AI Reasoning + Stats (Commit layer) ══════════ -->
-    <details class="details-panel" open>
+    <details class="details-panel" open="true" id="ai-reasoning-details">
       <summary class="details-summary">AI Reasoning & Feedback</summary>
       <div class="secondary-grid">
 

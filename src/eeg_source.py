@@ -32,7 +32,11 @@ Common BrainFlow board IDs:
 """
 
 import os
+import sys
 import json
+import time
+import queue
+import threading
 import joblib
 import numpy as np
 import pandas as pd
@@ -51,38 +55,6 @@ _BAND_RANGES = [
 ]
 
 
-# ── Multimodal Fusion: Spotify audio feature helper ───────────────────────────
-
-_AUDIO_DEFAULTS = [0.5, 0.5, 0.5, 0.5, 0.5]   # neutral midpoint for all 5 scalars
-
-
-def _build_audio_scalars(audio_features):
-    """Extract and normalise 5 Spotify audio features for multimodal fusion.
-
-    Returns a list of 5 floats, all in [0, 1]:
-        [tempo/200, energy, valence, acousticness, instrumentalness]
-
-    CRITICAL GUARD: If audio_features is None (startup, CSV-only mode, or API
-    failure) every scalar defaults to 0.5.  A variable-length feature vector
-    would change the shape between ticks and immediately crash StandardScaler.
-
-    Audio features bypass the EEG StandardScaler deliberately: they are already
-    [0,1]-normalised and the Kaggle training CSV has no Spotify data (constant
-    0.5 defaults → zero variance → scaler would zero-out all live values).
-    Tempo is divided by 200 to match the [0,1] range; values above 200 BPM
-    are clamped to 1.0 (e.g. drum-and-bass at 174 BPM → 0.87, well within range).
-    """
-    if not audio_features:
-        return list(_AUDIO_DEFAULTS)
-    return [
-        min(float(audio_features.get('tempo',            100.0)) / 200.0, 1.0),
-        float(audio_features.get('energy',           0.5)),
-        float(audio_features.get('valence',          0.5)),
-        float(audio_features.get('acousticness',     0.5)),
-        float(audio_features.get('instrumentalness', 0.5)),
-    ]
-
-
 # ── Abstract base ─────────────────────────────────────────────────────────────
 
 class EEGSource:
@@ -92,13 +64,9 @@ class EEGSource:
     next_reading() and close(), so the swap is one line.
     """
 
-    def next_reading(self, audio_features=None):
+    def next_reading(self):
         """Return (prediction: str, band_scores: dict, confidence: float).
 
-        audio_features — optional dict from get_audio_features() with keys:
-                         tempo (BPM int), energy, valence, acousticness,
-                         instrumentalness (all floats 0-1).
-                         Pass None to use neutral 0.5 defaults for all 5 scalars.
         prediction     — one of 'calm', 'relaxed', 'stressed'
         band_scores    — {band_name: float 0-1} where 0=calm-like, 1=stressed-like
         confidence     — max class probability from predict_proba (0.0–1.0);
@@ -106,14 +74,12 @@ class EEGSource:
         """
         raise NotImplementedError
 
-    def update_model(self, true_label):
-        """Incrementally update the classifier with a corrected ground-truth label.
+    def is_signal_saturated(self):
+        """Return True only if confidence is locked for too long."""
+        return False
 
-        Called by main_loop.py when the user rejects a track (👎), signalling
-        that the stress prediction that triggered the intervention may have been
-        a false positive. Subclasses with an SGDClassifier should override this
-        to call partial_fit(); the default is a safe no-op.
-        """
+    def update_model(self, true_label):
+        """Incrementally update the classifier with a corrected ground-truth label."""
         pass
 
     def close(self):
@@ -147,121 +113,78 @@ class CSVReplaySource(EEGSource):
             c for c in df.columns
             if c != 'Label' and pd.api.types.is_numeric_dtype(df[c])
         ]
-        # M-1: guard against an empty or header-only CSV file
         if len(df) == 0:
-            raise ValueError(
-                "EEG dataset is empty — check data/eeg_mental_state.csv. "
-                "Download from: kaggle.com/datasets/birdy654/eeg-brainwave-dataset-mental-state"
-            )
+            raise ValueError("EEG dataset is empty")
 
         self.df  = df
-        self.idx = 0   # loops back when dataset ends
-
-        # Sliding window smoothing: rolling median of last N raw rows.
-        # Reduces false stress triggers from single-sample noise spikes.
-        # Window of 3 readings = 3 s at the 1-second tick rate (PMC11089529).
+        self.idx = 0
         self._smooth_buf    = []
         self._smooth_window = 3
-
-        # Online Personalization: cache the last scaled feature vector so
-        # update_model() can call partial_fit() without re-computing the row.
         self._last_scaled_row = None
         self._classes = ['calm', 'relaxed', 'stressed']
 
-        # Map band names to their feature columns
-        # M-5: guard against non-integer freq column suffixes (e.g. freq_0.5_0)
-        # with a try/except so a different dataset format doesn't crash startup.
         self.band_cols = {}
         for band, lo, hi in _BAND_RANGES:
             cols = []
             for c in self.feature_cols:
-                if not c.startswith('freq_'):
-                    continue
+                if not c.startswith('freq_'): continue
                 parts = c.split('_')
-                if len(parts) < 2:
-                    continue
                 try:
                     val = int(parts[1])
-                except ValueError:
-                    continue
-                if lo <= val <= hi:
-                    cols.append(c)
+                    if lo <= val <= hi: cols.append(c)
+                except: continue
             self.band_cols[band] = cols
 
-        # Per-class means for deviation scoring (written by train_classifier.py)
         means_path = os.path.join(BASE, '..', 'models', 'class_means.json')
         try:
             with open(means_path, encoding='utf-8') as f:
                 self.class_means = json.load(f)
-            print("CSVReplaySource: class means loaded for band attribution.")
-        except Exception:
+        except:
             self.class_means = None
-            print("CSVReplaySource: class_means.json not found — "
-                  "run train_classifier.py to enable band attribution.")
 
-    def next_reading(self, audio_features=None):
-        raw = self.df.iloc[self.idx][self.feature_cols].values  # (n_features,)
-
-        # Sliding window smoothing: buffer raw rows, compute per-feature median.
-        # This smooths out transient noise spikes before classification so a
-        # single anomalous reading can't trigger a false 'stressed' prediction.
-        self._smooth_buf.append(raw.copy())  # .copy() ensures buffer entry is independent
+    def next_reading(self):
+        raw = self.df.iloc[self.idx][self.feature_cols].values
+        self._smooth_buf.append(raw.copy())
         if len(self._smooth_buf) > self._smooth_window:
             self._smooth_buf.pop(0)
-        smoothed = np.median(self._smooth_buf, axis=0)  # shape: (n_features,)
+        smoothed = np.median(self._smooth_buf, axis=0)
 
-        # ── Multimodal Fusion ─────────────────────────────────────────────────
-        # Step 1: scale EEG features only.  Audio features bypass the scaler
-        # because: (a) they're already [0,1]-normalised, and (b) the Kaggle
-        # training CSV has no Spotify data so the scaler was never fitted on
-        # those columns — including them would produce zero-variance → 0 output.
-        eeg_scaled    = self.scaler.transform(smoothed.reshape(1, -1))
+        # ── EEG Processing (100% Pure EEG) ────────────────────────────────────
+        # Apply the pre-fitted StandardScaler (fitted once on training data).
+        # partial_fit must NOT be called here — it would drift the scaler's
+        # mean/variance at inference time, corrupting the feature distribution.
+        row_scaled = self.scaler.transform(smoothed.reshape(1, -1))
 
-        # Step 2: build audio scalars (5 values, all [0,1]) and hstack.
-        audio_scalars = np.array(_build_audio_scalars(audio_features)).reshape(1, -1)
-        row_scaled    = np.hstack([eeg_scaled, audio_scalars])
-
-        self._last_scaled_row = row_scaled   # cached for update_model()
+        self._last_scaled_row = row_scaled
         prediction  = self.classifier.predict(row_scaled)[0]
         proba       = self.classifier.predict_proba(row_scaled)[0]
-        confidence  = float(max(proba))   # highest class probability = signal quality
+        confidence  = float(max(proba))
 
-        # Band scores from smoothed values (used by preference model for EEG features)
         smoothed_dict = dict(zip(self.feature_cols, smoothed))
         band_scores   = self._compute_band_scores(smoothed_dict)
+        self._last_delta = band_scores.get('Delta', 0.5)
 
-        # ── Dataset Loop & Signal Integrity ───────────────────────────────────
         self.idx = (self.idx + 1) % len(self.df)
         if self.idx == 0:
-            # Shuffle on wrap to prevent identical repetition in long sessions.
             self.df = self.df.sample(frac=1).reset_index(drop=True)
-            print("CSVReplaySource: dataset wrapped — shuffled for variety.")
 
-        # Signal integrity: if confidence > 0.99 for 10+ consecutive readings,
-        # the classifier is locked — likely disconnected electrode or ADC saturation.
-        if not hasattr(self, '_high_conf_streak'):
-            self._high_conf_streak = 0
-        
-        # Track streak of identical, very high confidence predictions
-        if not hasattr(self, '_last_prediction'):
-            self._last_prediction = None
+        if not hasattr(self, '_high_conf_streak'): self._high_conf_streak = 0
+        if not hasattr(self, '_last_prediction'): self._last_prediction = None
 
         if confidence > 0.99 and prediction == self._last_prediction:
             self._high_conf_streak += 1
-            if self._high_conf_streak == 10:
-                print("WARNING: EEG signal may be saturated or electrode disconnected "
-                      "(confidence > 99% for 10 consecutive identical readings)")
         else:
             self._high_conf_streak = 0
-        
         self._last_prediction = prediction
 
         return prediction, band_scores, confidence
 
+    def is_signal_saturated(self):
+        high_conf = getattr(self, '_high_conf_streak', 0) >= 25
+        return high_conf
+
     def _compute_band_scores(self, row_dict):
-        """Return {band: float 0-1} — deviation toward 'stressed' class mean."""
-        if self.class_means is None:
-            return {}
+        if self.class_means is None: return {}
         calm_m     = self.class_means.get('calm', {})
         stressed_m = self.class_means.get('stressed', {})
         scores = {}
@@ -269,60 +192,193 @@ class CSVReplaySource(EEGSource):
             curr         = [row_dict[c]       for c in cols if c in row_dict]
             calm_vals    = [calm_m.get(c, 0)  for c in cols if c in row_dict]
             stressed_vals = [stressed_m.get(c, 0) for c in cols if c in row_dict]
-            if not curr:
-                continue
+            if not curr: continue
             current_avg   = sum(curr)          / len(curr)
             calm_mean     = sum(calm_vals)      / len(calm_vals)
             stressed_mean = sum(stressed_vals)  / len(stressed_vals)
-            # signal_range: distance between the calm and stressed class means
-            # for this band. Used to normalise the score to [0, 1].
             signal_range = stressed_mean - calm_mean
             score = (current_avg - calm_mean) / signal_range if abs(signal_range) > 1e-10 else 0.5
             scores[band] = round(max(0.0, min(1.0, score)), 3)
         return scores
 
     def update_model(self, true_label):
-        """Incrementally update the SGDClassifier with a corrected ground-truth label.
-
-        Uses the feature vector cached during the most recent next_reading() call,
-        so no extra computation is needed at feedback time.
-
-        Args:
-            true_label: one of 'calm', 'relaxed', 'stressed'.
-                On a 👎 skip, main_loop passes 'relaxed' — a gentle correction
-                away from 'stressed' without overcorrecting all the way to 'calm'.
-                This is the academically defensible midpoint for an ambiguous signal.
-        """
-        if self._last_scaled_row is None:
-            return
+        if self._last_scaled_row is None: return
         try:
-            self.classifier.partial_fit(
-                self._last_scaled_row,
-                [true_label],
-                classes=self._classes,
-            )
-            print(f"SGD partial_fit: label='{true_label}' applied to last reading")
-        except Exception as e:
-            print(f"Warning: partial_fit failed ({e})")
+            self.classifier.partial_fit(self._last_scaled_row, [true_label], classes=self._classes)
+        except: pass
 
 
-# ── Future: BrainFlow live EEG ────────────────────────────────────────────────
-# Uncomment the class below when you have a BrainFlow-compatible headset.
-# Install: pip install brainflow
-# Docs:    brainflow.readthedocs.io
-#
-# IMPORTANT — calibration note:
-#   The classifier was trained on Kaggle CSV features (processed band-power
-#   values from a specific recording setup). Live BrainFlow readings will have
-#   different amplitude scales and noise profiles. Before deploying on hardware:
-#     1. Record 5 min of calm data + 5 min of intentional stress/focus with
-#        your headset using BrainFlow's data_collector.py example.
-#     2. Format the recording to match the Kaggle CSV schema (freq_XYZ_C cols).
-#     3. Re-run: python src/train_classifier.py --data your_recording.csv
-#     4. The new classifier.joblib will work with your hardware's signal profile.
-#
+# ── Arduino Serial EEG Source (Improved with Background Thread) ───────────────
+
+class ArduinoSerialSource(EEGSource):
+    """Reads real-time EEG classification from Arduino running mindtune_edge.ino.
+
+    Architecture:
+        Starts a background reader thread to drain the serial port instantly.
+        Blink events are queued and returned immediately via get_blink_action().
+        EEG packets are queued and returned via next_reading().
+    """
+
+    _LABEL_MAP  = {0: 'calm', 1: 'relaxed', 2: 'stressed'}
+    _BAND_NAMES = ['Delta', 'Theta', 'Alpha', 'Beta', 'Gamma']
+    _BAUD_RATE  = 115200
+    _BOOT_PREFIXES = ('MindTune', 'Format:', 'Classes:', '---', 'CAL')
+
+    def __init__(self, port='auto'):
+        try:
+            import serial as _serial_mod
+            from serial.tools import list_ports as _list_ports
+            self._serial_mod = _serial_mod
+        except ImportError:
+            raise ImportError("pyserial is not installed.")
+
+        if port == 'auto':
+            port = self._auto_detect_port()
+            if port is None:
+                raise RuntimeError("No Arduino detected.")
+
+        self._port = port
+        self._ser = _serial_mod.Serial(port, self._BAUD_RATE, timeout=2.0,
+                                       rtscts=False, dsrdtr=False)
+        print(f"ArduinoSerialSource: connected to {port} @ {self._BAUD_RATE} baud")
+
+        time.sleep(2.0)
+        self._ser.reset_input_buffer()
+
+        self._blink_queue = queue.Queue()
+        self._eeg_queue   = queue.Queue(maxsize=20)
+        self._running     = True
+        self._blinks_seen = 0
+
+        self._run_calibration()
+
+        # Start the background thread
+        self._thread = threading.Thread(target=self._reader_thread, daemon=True)
+        self._thread.start()
+
+        self._blink_just_occurred = False
+        self._last_prediction     = 'relaxed'
+        self._last_delta          = 0.0
+        self._high_conf_streak    = 0
+
+    def _reader_thread(self):
+        """Continuously reads from serial and populates queues."""
+        while self._running:
+            try:
+                if not self._ser or not self._ser.is_open:
+                    time.sleep(0.1)
+                    continue
+                
+                line = self._ser.readline().decode('ascii', errors='ignore').strip()
+                if not line: continue
+
+                if line == 'BLINK':
+                    print(f"BLINK DETECTED [{time.strftime('%H:%M:%S')}]")
+                    self._blink_queue.put('next_track')
+                    self._blink_just_occurred = True
+                    continue
+
+                if any(line.startswith(p) for p in self._BOOT_PREFIXES):
+                    continue
+
+                parts = line.split(',')
+                if len(parts) >= 2:
+                    try:
+                        pred_id    = int(parts[0])
+                        confidence = float(parts[1])
+                        band_scores = {}
+                        if len(parts) == 7:
+                            powers = [float(p) for p in parts[2:7]]
+                            band_scores = self._relative_band_power(powers)
+                        
+                        try:
+                            self._eeg_queue.put_nowait((pred_id, confidence, band_scores))
+                        except queue.Full:
+                            try: self._eeg_queue.get_nowait()
+                            except queue.Empty: pass
+                            try: self._eeg_queue.put_nowait((pred_id, confidence, band_scores))
+                            except queue.Full: pass   # still full — drop packet, never crash
+                    except ValueError:
+                        continue
+            except Exception as e:
+                if self._running:
+                    print(f"ArduinoSerialSource: serial error ({e})")
+                time.sleep(1)
+
+    def next_reading(self):
+        """Returns the latest EEG packet from the queue."""
+        try:
+            # Check for fresh data (wait up to 1.1s for the 0.5s packet)
+            pred_id, confidence, band_scores = self._eeg_queue.get(timeout=1.1)
+            
+            if self._blink_just_occurred:
+                self._blink_just_occurred = False
+                return self._last_prediction, band_scores, min(confidence, 0.4)
+
+            prediction = self._LABEL_MAP.get(pred_id, 'relaxed')
+            
+            if confidence > 0.99 and prediction == self._last_prediction:
+                self._high_conf_streak = getattr(self, '_high_conf_streak', 0) + 1
+            else:
+                self._high_conf_streak = 0
+                
+            self._last_prediction = prediction
+            self._last_delta = band_scores.get('Delta', 0.0)
+            return prediction, band_scores, confidence
+
+        except queue.Empty:
+            return self._last_prediction, {}, 0.4
+
+    def is_signal_saturated(self):
+        return getattr(self, '_high_conf_streak', 0) >= 25
+
+    def _run_calibration(self):
+        print("\n" + "=" * 55)
+        print("  BLINK CALIBRATION — up to 8s (sit still, then blink)")
+        print("=" * 55)
+        deadline = time.time() + 8.0
+        while time.time() < deadline:
+            try:
+                line = self._ser.readline().decode('ascii', errors='ignore').strip()
+                if line == 'CAL:baseline': print("  Phase 1/2: Sit still...")
+                elif line == 'CAL:blink': print("  Phase 2/2: Now BLINK...")
+                elif line.startswith('CAL_DONE:'):
+                    print(f"  Threshold set.")
+                    print("=" * 55 + "\n")
+                    return
+            except: break
+        print("  (Calibration timed out)\n")
+
+    def get_blink_action(self):
+        try: return self._blink_queue.get_nowait()
+        except queue.Empty: return None
+
+    def inject_blink_spike(self):
+        self._blinks_seen += 1
+        if self._blinks_seen >= 2:
+            self._blink_queue.put('next_track')
+            self._blinks_seen = 0
+
+    def simulate_double_blink(self):
+        self._blink_queue.put('next_track')
+
+    def _relative_band_power(self, powers):
+        total = sum(powers) + 1e-10
+        return {name: round(powers[i] / total, 4) for i, name in enumerate(self._BAND_NAMES)}
+
+    def _auto_detect_port(self):
+        import serial.tools.list_ports as lp
+        for p in lp.comports():
+            if any(kw in (p.device or '').lower() for kw in ('usbmodem', 'ttyacm', 'ttyusb')):
+                return p.device
+        return None
+
+    def close(self):
+        self._running = False
+        if self._ser: self._ser.close()
+
+
+# ── Future: BrainFlow ─────────────────────────────────────────────────────────
 class BrainFlowSource(EEGSource):
-    """Hardware implementation for Muse/OpenBCI (Future Work)."""
-    def next_reading(self, audio_features=None):
-        raise NotImplementedError("Hardware streaming requires BrainFlow installation.")
-
+    def next_reading(self):
+        raise NotImplementedError("Hardware streaming requires BrainFlow.")
