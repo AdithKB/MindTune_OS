@@ -119,7 +119,7 @@ class CSVReplaySource(EEGSource):
         self.df  = df
         self.idx = 0
         self._smooth_buf    = []
-        self._smooth_window = 3
+        self._smooth_window = 5
         self._last_scaled_row = None
         self._classes = ['calm', 'relaxed', 'stressed']
 

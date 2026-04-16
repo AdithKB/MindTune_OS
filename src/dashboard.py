@@ -12,6 +12,7 @@ from collections import defaultdict
 import json
 import os
 import datetime
+import re
 from utils import atomic_write_json
 
 app = Flask(__name__, template_folder='../templates', static_folder='../static')
@@ -104,6 +105,87 @@ def profile():
         return jsonify(result)
     except Exception:
         return jsonify(None)
+
+
+@app.route('/correlations')
+def correlations():
+    """Compute which EEG band is most elevated when each music style helps.
+
+    Returns a list of {tag, band, lift, count} objects.
+    Extracts a label (genre/artist) from the 'query' field, as 'tags' are missing.
+    """
+    try:
+        with open(FEEDBACK_LOG, encoding='utf-8') as f:
+            log = json.load(f)
+    except Exception:
+        return jsonify([])
+
+    BANDS = ['Delta', 'Theta', 'Alpha', 'Beta', 'Gamma']
+
+    # Filter wins with EEG data. We use 'query' instead of 'tags' now.
+    wins = [e for e in log
+            if e.get('feedback') == 1 and e.get('eeg_band_scores') and e.get('query')]
+    if not wins:
+        return jsonify([])
+
+    # Global mean band scores across all wins (baseline)
+    global_mean = {}
+    for band in BANDS:
+        vals = [w['eeg_band_scores'].get(band, 0) for w in wins]
+        global_mean[band] = sum(vals) / len(vals) if vals else 0
+
+    # Group wins by a label derived from query/track/artist
+    tag_wins = defaultdict(list)
+    for w in wins:
+        q = w['query']
+        label = None
+        # Try extraction via regex
+        m_genre  = re.search(r'genre:(\w+)', q)
+        m_artist = re.search(r'artist:"([^"]+)"', q)
+        if m_genre:
+            label = m_genre.group(1).lower()
+        elif m_artist:
+            label = m_artist.group(1)
+        else:
+            # Fallback to just artist name (much shorter than full track title)
+            label = w.get('artist') or w.get('track', 'Unknown')
+            # Truncate at 25 chars to keep display clean
+            if len(label) > 25:
+                label = label[:23] + '…'
+        
+        if label:
+            tag_wins[label].append(w)
+
+    result = []
+    for tag, tw in tag_wins.items():
+        if len(tw) < 4:  # Min 4 wins for statistical credibility
+            continue
+        
+        best_band = None
+        best_lift = -999
+        for band in BANDS:
+            tag_avg = sum(w['eeg_band_scores'].get(band, 0) for w in tw) / len(tw)
+            lift = round(tag_avg - global_mean[band], 3)
+            if lift > best_lift:
+                best_lift = lift
+                best_band = band
+        
+        if best_band and best_lift > 0.05:  # meaningful lift threshold
+            result.append({
+                'tag':  tag,
+                'band': best_band,
+                'lift': best_lift,
+                'count': len(tw),
+            })
+
+    import math
+    # Sort by reliability-weighted score: lift × log(count+1).
+    # Pure lift favours tiny samples (n=2 flukes); weighting by log(count)
+    # surfaces findings that are both strong AND consistent across sessions.
+    for r in result:
+        r['score'] = round(r['lift'] * math.log(r['count'] + 1), 4)
+    result.sort(key=lambda x: x['score'], reverse=True)
+    return jsonify(result[:8])
 
 
 @app.route('/sessions')

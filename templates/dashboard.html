@@ -8,7 +8,7 @@
   <title>MindTune-OS</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Syne:wght@600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard.css') }}">
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 </head>
@@ -56,26 +56,27 @@
         <div class="blink-pips"><div class="blink-pip"></div><div class="blink-pip"></div></div>
       </div>
       <div class="topbar-tools" aria-label="Hardware tools">
-        <button onclick="simulateDoubleBlink()" class="tool-btn" title="Simulate double-blink (skip track)" aria-label="Simulate double-blink skip">⚡ Skip</button>
-        <button id="recalibrate-btn" onclick="recalibrateSensor()" class="tool-btn" title="Re-run blink calibration if the sensor drifted" aria-label="Recalibrate sensor">↺ Recal</button>
+        <button onclick="simulateDoubleBlink()" class="tool-btn" title="Simulate a double-blink skip" aria-label="Simulate double-blink skip">Skip</button>
+        <button id="recalibrate-btn" onclick="recalibrateSensor()" class="tool-btn" title="Re-run blink calibration" aria-label="Recalibrate sensor" style="display:none;">↺</button>
       </div>
       <button id="force-stress-btn" onclick="forceStress()" class="debug-btn" title="Force stress (Debug)" style="display:none;" aria-label="Force stress intervention">🔥 Force Stress</button>
     </nav>
   </header>
 
-  <!-- ══ Contextual banners (hidden until triggered) ══════════════ -->
-  <div id="pending-win-banner" role="status" aria-live="polite">
-    <span class="pending-win-icon">🏆</span>
-    Stress dropped — saving this as a win
-  </div>
-  <div id="saturation-banner" class="alert-banner" role="alert" aria-live="assertive">
-    <span class="alert-icon">⚠️</span>
-    SIGNAL SATURATED: Check electrode contact
-  </div>
-  <div id="focus-banner" role="status" aria-live="polite">
-    <div class="focus-banner-dot"></div>
-    Focus Mode — playing instrumental music
-    <span id="focus-banner-ratio" style="opacity:0.6;"></span>
+  <!-- ══ Notification toasts — fixed overlay, stacked via flex column ═ -->
+  <!-- Container is the only fixed element; banners are static inside it.  -->
+  <!-- Multiple banners stack vertically instead of overlapping.           -->
+  <div id="toast-container" role="region" aria-label="System notifications">
+
+    <div id="saturation-banner" class="alert-banner" role="alert" aria-live="assertive">
+      <span class="alert-icon">⚠️</span>
+      Signal poor — check electrode contact
+    </div>
+    <div id="focus-banner" role="status" aria-live="polite">
+      <div class="focus-banner-dot"></div>
+      Focus Mode — playing instrumental music
+      <span id="focus-banner-ratio" style="opacity:0.6;"></span>
+    </div>
   </div>
 
   <!-- ══ Status bar ═══════════════════════════════════════════════ -->
@@ -85,7 +86,7 @@
       <span class="goal-text" id="goal-text">Monitoring brainwaves...</span>
     </div>
     <span class="goal-label">System Goal</span>
-    <div id="debug-msg" style="font-size:0.7rem; color:#fde047; font-weight:600; padding:2px 8px; background:rgba(0,0,0,0.2); border-radius:6px; display:none; white-space:nowrap;"></div>
+    <div id="debug-msg" style="display:none !important;"></div>
   </div>
 
   <!-- ══ Live Pipeline Strip ════════════════════════════════════════ -->
@@ -187,14 +188,6 @@
           <div id="fb-confirm" class="fb-confirm" role="status" aria-live="polite"></div>
         </div>
 
-        <button id="mode-toggle-btn" class="mode-toggle-btn" onclick="toggleFocusMode()" aria-label="Toggle between Calm and Focus modes">
-          <span class="mode-toggle-label">
-            <span id="mode-toggle-icon">🧘</span>
-            <span id="mode-toggle-text">Calm Mode</span>
-          </span>
-          <span class="mode-toggle-switch">Switch</span>
-        </button>
-
         <div id="learning-badge" class="learning-badge" role="status"></div>
         <div id="status-msg" class="status-msg" role="status"></div>
 
@@ -215,7 +208,7 @@
     </div>
 
     <!-- ══ Secondary: AI Reasoning + Stats (Commit layer) ══════════ -->
-    <details class="details-panel" open="true" id="ai-reasoning-details">
+    <details class="details-panel" id="ai-reasoning-details">
       <summary class="details-summary">AI Reasoning & Feedback</summary>
       <div class="secondary-grid">
 
@@ -245,13 +238,18 @@
               </div>
               <div class="pref-counter">
                 <div id="pref-neg" class="pref-counter-val neg">0</div>
-                <div class="pref-counter-lbl">Skipped</div>
+                <div class="pref-counter-lbl">Moved On</div>
               </div>
             </div>
             <div class="pref-right">
               <div id="pref-phase" class="pref-phase-badge p1">Phase 1</div>
               <div id="pref-hint" class="pref-hint">10 feedback entries activates ML</div>
             </div>
+          </div>
+          <!-- Inline preview of what the ML has learned — only visible in Phase 2 -->
+          <div id="pref-learned" style="display:none; margin-top:var(--sp-12); padding-top:var(--sp-12); border-top:1px solid var(--border);">
+            <div class="panel-sub" style="margin-bottom:var(--sp-6);">What works for your brain</div>
+            <div id="pref-learned-tags" style="display:flex; flex-wrap:wrap; gap:var(--sp-4);"></div>
           </div>
         </div>
 
@@ -271,30 +269,36 @@
             <div id="trend-line" class="trend-line" style="display:none;"></div>
           </div>
           <div class="learn-right">
-            <div class="learn-section-lbl">Patterns Learned</div>
-            <div class="tag-row" id="top-tags-row" style="display:none;">
-              <span class="tag-row-lbl">Works:</span>
-              <div id="top-tags"></div>
+            <div class="learn-section-lbl">What the AI learned about you</div>
+
+            <!-- Top insight: one-sentence summary of the dominant finding -->
+            <div id="brain-insight" style="display:none;" class="brain-insight-card">
+              <div id="insight-headline" class="insight-headline"></div>
             </div>
-            <div class="tag-row" id="bad-tags-row" style="display:none;">
-              <span class="tag-row-lbl">Doesn't help:</span>
-              <div id="bad-tags"></div>
-            </div>
-            <div id="eeg-influence-section" style="display:none; margin-top:12px;">
-              <div class="eeg-section-lbl">Brainwave influence</div>
+
+            <!-- Music grouped by brain state — the main story -->
+            <div id="corr-list" style="display:none;"></div>
+
+            <!-- EEG signal weights — shown below as supporting detail -->
+            <div id="eeg-influence-section" style="display:none;">
+              <div class="patterns-sub-lbl" style="margin-top:var(--sp-16);">How each brain signal responds</div>
               <div id="eeg-bars"></div>
             </div>
-            <div id="ml-tag-section" style="display:none; margin-top:10px;">
-              <div class="tag-row" id="ml-top-row" style="display:none;">
-                <span class="tag-row-lbl">ML picks:</span>
-                <div id="ml-top-tags"></div>
-              </div>
-              <div class="tag-row" id="ml-worst-row" style="display:none;">
-                <span class="tag-row-lbl">ML avoids:</span>
-                <div id="ml-worst-tags"></div>
-              </div>
+
+            <!-- Fallback: simple top tags when no correlation data yet -->
+            <div id="top-tags-fallback" style="display:none; margin-top:6px;">
+              <div class="patterns-sub-lbl">Music that calms you</div>
+              <div id="top-tags-simple" style="display:flex; flex-wrap:wrap; gap:4px;"></div>
             </div>
-            <div class="no-sessions" id="brain-patterns-empty">Use the 👍/👎 buttons during music playback to teach the AI your preferences</div>
+
+            <!-- Kept for JS compatibility, not visible -->
+            <div id="top-tags-row" style="display:none;"><div id="top-tags"></div></div>
+            <div id="bad-tags-row" style="display:none;"><div id="bad-tags"></div></div>
+            <div id="ml-tag-section" style="display:none;">
+              <div id="ml-top-row" style="display:none;"><div id="ml-top-tags"></div></div>
+              <div id="ml-worst-row" style="display:none;"><div id="ml-worst-tags"></div></div>
+            </div>
+            <div class="no-sessions" id="brain-patterns-empty">Use the 👍/👎 buttons during music playback — the AI will learn which sounds match your brain state</div>
           </div>
         </div>
       </div>

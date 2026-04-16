@@ -284,3 +284,125 @@ make logs     # Tail live logs (both processes)
 make status   # Check process state + credentials
 make clean    # ⚠️  Wipes ALL session history — do not run before demo
 ```
+
+
+
+
+## PPT Design
+
+⏺ Here's the complete deck design. One correction before the Easter Eggs section: use "DASM Proxy (θ/β)" — do not expand the acronym. "DASM Selective Monitoring" is not in the codebase and
+   was a prior hallucination.                                                                                                     
+
+  ---                                                                                                                                                                                       
+  10-Slide Deck — Full Content
+                                                                                                                                                                                            
+  ---                                                          
+  Slide 1 — Title                                                                                                                                                                           
+  - Headline: MindTune-OS: Closed-Loop EEG-Adaptive Music Therapy
+  - Visual: Dark charcoal background, indigo waveform graphic, 4 student names, NCI MSc FAI · April 2026
+  - Key terms: Closed-loop biofeedback · BCI · Real-time personalisation                                                                                                                    
+                                                                                                                                                                                            
+  ---                                                                                                                                                                                       
+  Slide 2 — The Problem                                                                                                                                                                     
+  - Headline: Stress is physiological — and it's decodable                                                                                                                                  
+  - Visual: Two EEG waveform traces side-by-side: calm (Alpha-dominant, low Beta) vs. stressed (high Beta, suppressed Alpha). Label the bands.                                              
+  - Key terms: Alpha suppression under stress · Beta elevation · 90-min Ultradian cognitive trough                                                                                          
+                                                                                                                                                                                            
+  ---                                                                                                                                                                                       
+  Slide 3 — The Signal (Student 1)                                                                                                                                                          
+  - Headline: From microvolt to mental state in one pipeline                                                                                                                                
+  - Visual: Hardware chain diagram: Scalp → BioAmp EXG Pill (amplifier) → Arduino UNO R4 (ADC) → USB Serial → Python
+  - Key terms: Microvolt amplification · ADC (128-point FFT window) · CSVReplaySource = identical pipeline                                                                                  
+                                                                                                                                                                                            
+  ---                                                                                                                                                                                       
+  Slide 4 — The 5 Bands + Blink Remote (Student 1)                                                                                                                                          
+  - Headline: Five bands. One remote. No buttons.                                                                                                                                           
+  - Visual: Horizontal band table (Delta 0.5–4Hz / Theta 4–8Hz / Alpha 8–13Hz / Beta 13–30Hz / Gamma 30+Hz with a one-word label each), plus a small eye-blink icon with annotation: "13–102
+   samples · 1.0s window · 6/6 tests pass"                                                                                                                                                  
+  - Key terms: Duration-based EOG heuristic · Not ML · Signal processing threshold classifier                                                                                               
+                                                                                                                                                                                            
+  ---                                                                                                                                                                                       
+  Slide 5 — The ML Pipeline (Student 2)                        
+  - Headline: 988 features in. Stress probability out.                                                                                                                                      
+  - Visual: Feature vector diagram: [Δ, θ, α, β, γ, α/β, θ/β, tag_0…tag_n] → StandardScaler → SGDClassifier → {calm / relaxed / stressed}
+  - Key terms: z-score normalisation (non-optional for ratio features) · SGDClassifier log_loss · 92.94% accuracy (n=1,983 train / 496 test)                                                
+                                                                                                                                                                                            
+  ---                                                                                                                                                                                       
+  Slide 6 — Pure EEG Validation (Student 2)                                                                                                                                                 
+  - Headline: Audio metadata is noise. The brain is the ground truth.                                                                                                                       
+  - Visual: Bar chart — see data below                               
+  - Key terms: Ablation study · Majority-class baseline · Pure EEG architecture · DASM Proxy (θ/β) · ADI α/(β+γ) — Davidson 1988                                                            
+                                                                                                                                                                                            
+  ---                                                                                                                                                                                       
+  Slide 7 — The Intervention Chain (Student 3)                                                                                                                                              
+  - Headline: Stress triggers a 3-layer AI intervention in under 1 second                                                                                                                   
+  - Visual: Mermaid flowchart — see code below                           
+  - Key terms: Rolling 5-tick window · stress_count >= 3 · Zero-shot contextual reasoning · Rate-limit gate (_spotify_blocked_until)                                                        
+                                                               
+  ---                                                                                                                                                                                       
+  Slide 8 — Groq Prompt Structure (Student 3)                  
+  - Headline: The LLM reasons over 500+ sessions, not just the current track                                                                                                                
+  - Visual: Annotated prompt block (dark code box):                         
+  MODE: CALM                                                                                                                                                                                
+  EEG: ['stressed', 'stressed', 'relaxed', 'stressed', 'stressed']                                                                                                                          
+  TRIED: [last 10 queries]                                                                                                                                                                  
+  WINS:  [last 5 — track, artist, reason]                                                                                                                                                   
+  FAILS: [last 3]                                                                                                                                                                           
+  → QUERY: <3-6 words>                                                                                                                                                                      
+  → REASON: <one sentence>                                                                                                                                                                  
+  - Key terms: Llama-3.3-70b-versatile · max_completion_tokens=100 · Structured output parsing · _FALLBACK_QUERIES safety net                                                               
+                                                                                                                                                                                            
+  ---                                                                                                                                                                                       
+  Slide 9 — Closing the Loop (Student 4)                       
+  - Headline: Every feedback event retrains the model in milliseconds                                                                                                                       
+  - Visual: Closed loop diagram: EEG → Classify → Intervene → 👍/👎 → partial_fit → (loop) with two labels: "Automatic win: stress_count ≤ 1" and "Atomic Persistence: tempfile +
+  os.replace"                                                                                                                                                                               
+  - Key terms: O(1) partial_fit · pending_win flag · Atomic Persistence · Reward hacking (acknowledged limitation) · Ultradian proactive trigger (90 min)                                   
+                                                                                                                                                                                            
+  ---                                                                                                                                                                                       
+  Slide 10 — Conclusion & Live Demo                            
+  - Headline: What's next: RLHF Upgrade Path                                                                                                                                                
+  - Visual: Simple upgrade diagram: SGDClassifier → MLP (pairwise preferences) → Bradley-Terry reward model with citation "Christiano et al. 2017 · Ziegler et al. 2019"
+  - Key terms: RLHF Upgrade Path · feedback_log.json schema-compatible · comparison_winner field ready                                                                                      
+                                                                                                                                                                                            
+  ---                                                                                                                                                                                       
+  Slide 6 — Ablation Chart Data                                                                                                                                                             
+                                                                                                                                                                                            
+  Category          | Accuracy | Bar colour                    
+  ──────────────────|──────────|────────────                                                                                                                                                
+  EEG Only          | 91.94%   | Indigo (primary)              
+  Multimodal        | 91.73%   | Indigo (muted) — shows audio adds nothing                                                                                                                  
+  Audio Only        | 33.47%   | Red                                                                                                                                                        
+  Majority Baseline | 33.47%   | Red (dashed border, same height)                                                                                                                           
+                                                                                                                                                                                            
+  Annotation to add: "Audio-only = random chance" arrow pointing at the red bars.                                                                                                           
+                                                                                                                                                                                            
+  Source: research_and_dev/models/ablation_results.json — verified.                                                                                                                         
+                                                               
+  ---                                                                                                                                                                                       
+  Slide 7 — Mermaid Flowchart                                  
+
+  flowchart TD
+      A["stress_count ≥ 3/5\n(rolling 5-tick window)"] --> B["Strategy 1\nLast.fm Similarity API\n(seeded from wins_log.json artists)"]
+      B -->|"Artist found"| E["Spotify search_and_play()"]                                                                                                                                  
+      B -->|"No result"| C["Strategy 2\nGroq · Llama-3.3-70b-versatile\nmax 100 tokens · &lt;1s latency"]                                                                                   
+      C -->|"QUERY: / REASON: parsed"| E                                                                                                                                                    
+      C -->|"Format mismatch"| D["_FALLBACK_QUERIES\n10 rotating entries\nincl. 'Weightless — Marconi Union'"]                                                                              
+      D --> E                                                                                                                                                                               
+      E -->|"HTTP 429"| F["Rate-limit gate\n_spotify_blocked_until\nReturn None instantly"]                                                                                                 
+      E -->|"Success"| G["Track playing\nmonitor for pending_win"]                                                                                                                          
+                                                                                                                                                                                            
+  ---                                                                                                                                                                                       
+  Academic Easter Eggs — Placement Map                                                                                                                                                      
+                                                                                                                                                                                            
+  ┌─────────────────────────────┬───────┬───────────────────────────────────────────────────────────────┐
+  │            Term             │ Slide │                            Context                            │                                                                                   
+  ├─────────────────────────────┼───────┼───────────────────────────────────────────────────────────────┤
+  │ DASM Proxy (θ/β)            │ 6     │ Key term under ablation chart — cognitive load index          │
+  ├─────────────────────────────┼───────┼───────────────────────────────────────────────────────────────┤
+  │ Alpha Dominance Index (ADI) │ 6     │ α/(β+γ), Davidson 1988 — alongside DASM                       │                                                                                   
+  ├─────────────────────────────┼───────┼───────────────────────────────────────────────────────────────┤                                                                                   
+  │ Atomic Persistence          │ 9     │ Loop diagram label — tempfile.NamedTemporaryFile + os.replace │                                                                                   
+  ├─────────────────────────────┼───────┼───────────────────────────────────────────────────────────────┤                                                                                   
+  │ RLHF Upgrade Path           │ 10    │ Centre of conclusion slide — Bradley-Terry model citation     │
+  └─────────────────────────────┴───────┴───────────────────────────────────────────────────────────────┘    

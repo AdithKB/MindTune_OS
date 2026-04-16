@@ -7,7 +7,7 @@
      4. Progressive disclosure — details/summary for secondary info
      5. Action proximity — primary actions near the data they affect
      6. WCAG 2.1 AA contrast — all text ≥ 4.5:1 on background
-   Font : Inter (UI), JetBrains Mono (data)
+   Font : Syne (brand), Inter (UI), JetBrains Mono (data)
    ═══════════════════════════════════════════════════════════════════════ */
 
 /* ── Design Tokens ────────────────────────────────────────────────── */
@@ -61,6 +61,16 @@
   --duration: 0.2s;
 }
 
+/* ── Atmospheric background — full viewport, behind the capped body ── */
+html {
+  background: #09090b;
+  /* Subtle bioluminescent depth: calm-green bloom at top, focus-purple hint at bottom-right */
+  background-image:
+    radial-gradient(ellipse 70% 45% at 50% -5%,  rgba(52,211,153,0.055) 0%, transparent 65%),
+    radial-gradient(ellipse 50% 35% at 90% 105%, rgba(167,139,250,0.04) 0%, transparent 60%);
+  min-height: 100%;
+}
+
 /* ── Reset ────────────────────────────────────────────────────────── */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 button, input, select, textarea { font-size: 16px; } /* prevent iOS auto-zoom */
@@ -68,7 +78,7 @@ button, input, select, textarea { font-size: 16px; } /* prevent iOS auto-zoom */
 body {
   background: var(--bg);
   color: var(--text);
-  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  font-family: 'DM Sans', system-ui, -apple-system, sans-serif;
   font-size: 14px;
   line-height: 1.5;
   min-height: 100vh;
@@ -181,9 +191,10 @@ a:focus:not(:focus-visible) {
 }
 .topbar-brand { display: flex; align-items: center; gap: var(--sp-12); }
 .brand-name {
-  font-size: 1.15rem; font-weight: 800; letter-spacing: -0.03em;
+  font-family: 'Syne', sans-serif;
+  font-size: 1.2rem; font-weight: 800; letter-spacing: -0.02em;
   color: var(--text);
-  background: linear-gradient(135deg, var(--text) 60%, var(--text2));
+  background: linear-gradient(135deg, var(--text) 55%, var(--calm-col) 130%);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
@@ -276,40 +287,59 @@ a:focus:not(:focus-visible) {
 @keyframes blinkFire { 0%,80%{opacity:1} 100%{opacity:0.4} }
 
 /* ═══════════════════════════════════════════════════════════════════
-   CONTEXTUAL BANNERS — appear only when relevant (progressive disclosure)
+   NOTIFICATION TOASTS
+   #toast-container is the only fixed element. Banners are static inside
+   it, stacking vertically via flex-column. Multiple banners never overlap.
+   JS still just toggles .visible on each banner — no JS changes needed.
    ═══════════════════════════════════════════════════════════════════ */
-#pending-win-banner {
-  display: none; align-items: center; justify-content: center; gap: var(--sp-8);
-  background: rgba(52,211,153,0.08); border: 1px solid rgba(52,211,153,0.2);
+
+#toast-container {
+  position: fixed;
+  top: 56px;                               /* clears the header */
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(calc(100% - 40px), 1060px);
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  pointer-events: none;                    /* pass-through on gaps */
+}
+
+/* Shared banner shell — static inside the container */
+#pending-win-banner,
+.alert-banner,
+#focus-banner {
+  display: none;                           /* collapsed = no space in column */
+  align-items: center; justify-content: center; gap: var(--sp-8);
   border-radius: var(--radius-sm); padding: var(--sp-8) var(--sp-16);
-  margin-bottom: var(--sp-8);
-  font-size: 0.85rem; font-weight: 600; color: var(--calm-col);
+  font-size: 0.85rem; font-weight: 600;
+  width: 100%;
+  pointer-events: auto;                    /* re-enable on banners themselves */
+}
+#pending-win-banner.visible,
+.alert-banner.visible,
+#focus-banner.visible { display: flex; }  /* takes natural height, pushes siblings down */
+
+/* Per-banner colours */
+#pending-win-banner {
+  background: rgba(52,211,153,0.10); border: 1px solid rgba(52,211,153,0.25);
+  color: var(--calm-col);
   animation: bannerPulse 2.5s ease-in-out infinite;
 }
-#pending-win-banner.visible { display: flex; }
-
 .alert-banner {
-  display: none; align-items: center; justify-content: center; gap: var(--sp-8);
-  background: rgba(239,68,68,0.1); border: 1px solid rgba(239,68,68,0.3);
-  border-radius: var(--radius-sm); padding: var(--sp-8) var(--sp-16);
-  margin-bottom: var(--sp-8);
-  font-size: 0.85rem; font-weight: 700; color: #ef4444;
-  animation: alertPulse 1.5s ease-in-out infinite;
+  background: rgba(239,68,68,0.10); border: 1px solid rgba(239,68,68,0.35);
+  color: #ef4444; font-weight: 700;
+  animation: bannerPulse 1.5s ease-in-out infinite;
 }
-.alert-banner.visible { display: flex; }
-@keyframes alertPulse { 0%,100%{transform:scale(1)} 50%{transform:scale(1.02); opacity:0.8} }
+#focus-banner {
+  background: rgba(167,139,250,0.08); border: 1px solid rgba(167,139,250,0.2);
+  color: var(--focus-col);
+}
 
-@keyframes bannerPulse { 0%,100%{opacity:1} 50%{opacity:0.6} }
+@keyframes bannerPulse { 0%,100%{opacity:1} 50%{opacity:0.65} }
 .pending-win-icon { font-size: 1rem; }
 
-#focus-banner {
-  display: none; align-items: center; justify-content: center; gap: var(--sp-8);
-  background: rgba(167,139,250,0.08); border: 1px solid rgba(167,139,250,0.2);
-  border-radius: var(--radius-sm); padding: var(--sp-8) var(--sp-16);
-  margin-bottom: var(--sp-8);
-  font-size: 0.85rem; font-weight: 600; color: var(--focus-col);
-}
-#focus-banner.visible { display: flex; }
 .focus-banner-dot {
   width: 8px; height: 8px; border-radius: 50%;
   background: var(--focus-col); box-shadow: 0 0 6px var(--focus-col);
@@ -420,6 +450,7 @@ a:focus:not(:focus-visible) {
   font-size: 0.78rem; color: var(--text2);
   margin-top: var(--sp-2); margin-bottom: var(--sp-8); max-width: 200px;
   line-height: 1.4;
+  min-height: 2.8em; /* 2 lines reserved — text changes never shift the card height */
 }
 
 /* Recent readings dots — visual mini-history */
@@ -469,7 +500,7 @@ a:focus:not(:focus-visible) {
   padding-top: var(--sp-12); border-top: 1px solid var(--border);
 }
 .band-item { flex: 1; display: flex; flex-direction: column; gap: 3px; align-items: center; min-width: 0; }
-.band-name { font-size: 0.65rem; font-weight: 600; color: var(--text3); white-space: nowrap; overflow: hidden; max-width: 100%; }
+.band-name { font-size: 0.65rem; font-weight: 600; color: var(--text3); white-space: normal; overflow: visible; max-width: 100%; text-align: center; line-height: 1.2; }
 .band-bar-wrap { width: 100%; background: var(--surface2); border-radius: 3px; height: 4px; overflow: hidden; }
 .band-bar { height: 100%; border-radius: 3px; transition: width 0.5s var(--ease-out); }
 .band-human { display: none; }
@@ -738,6 +769,11 @@ details[open] > .secondary-grid {
 /* ── Learning & Sessions ─────────────────────────────────────────── */
 .learn-split {
   display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-24);
+  /* default align-items: stretch — both columns fill to the taller one */
+}
+/* Left column: flex column so #sessions-list can grow into the stretched height */
+.learn-left {
+  display: flex; flex-direction: column; min-height: 0;
 }
 .learn-right {
   border-left: 1px solid var(--border); padding-left: var(--sp-24);
@@ -746,6 +782,18 @@ details[open] > .secondary-grid {
   font-size: 0.7rem; font-weight: 600; text-transform: uppercase;
   letter-spacing: 0.06em; color: var(--text3); margin-bottom: var(--sp-12);
 }
+#sessions-list {
+  flex: 1;          /* grow to fill .learn-left height */
+  min-height: 0;    /* required: allows flex child to shrink below content height */
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--surface2) transparent;
+  padding-right: var(--sp-4);
+}
+#sessions-list::-webkit-scrollbar { width: 3px; }
+#sessions-list::-webkit-scrollbar-track { background: transparent; }
+#sessions-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
 .session-row {
   display: grid; grid-template-columns: 40px 1fr auto;
   align-items: center; gap: var(--sp-12); padding: var(--sp-8) 0;
@@ -795,6 +843,108 @@ details[open] > .secondary-grid {
 .eeg-bar-fill.pos { background:var(--calm-col); }
 .eeg-bar-fill.neg { background:var(--stress-col); }
 .eeg-bar-val  { width:40px; text-align:right; font-size:0.75rem; font-family:'JetBrains Mono',monospace; }
+
+/* Sub-section label within Patterns panel */
+.patterns-sub-lbl {
+  font-size: 0.6rem; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.08em; color: var(--text3);
+  margin-bottom: var(--sp-8); margin-top: 0;
+}
+
+/* ── Brain insight card — top summary with green accent bar ── */
+.brain-insight-card {
+  position: relative;
+  background: rgba(52,211,153,0.04);
+  border: 1px solid rgba(52,211,153,0.15);
+  border-left: 3px solid var(--calm-col);
+  border-radius: var(--radius-sm);
+  padding: var(--sp-12) var(--sp-16);
+  margin-bottom: var(--sp-16);
+}
+.insight-headline {
+  font-size: 0.8rem; line-height: 1.55; color: var(--text2);
+}
+.insight-headline strong { color: var(--text1); font-weight: 700; }
+.insight-meta {
+  font-size: 0.68rem; color: var(--text3); font-style: normal;
+}
+
+/* ── Music groups — stacked brain-state cards ── */
+#corr-list { display: flex; flex-direction: column; gap: var(--sp-8); margin-top: var(--sp-4); }
+.music-group {
+  background: var(--surface2);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  padding: var(--sp-10) var(--sp-12);
+  transition: border-color 0.15s;
+}
+.music-group:hover { border-color: rgba(99,102,241,0.3); }
+.music-group-header {
+  display: flex; align-items: center; gap: var(--sp-8); margin-bottom: var(--sp-4);
+}
+.music-group-wins {
+  font-size: 0.62rem; color: var(--text3); margin-left: auto;
+  background: var(--surface); border-radius: 10px;
+  padding: 1px var(--sp-6); border: 1px solid var(--border);
+}
+.music-group-state-desc {
+  font-size: 0.68rem; color: var(--text3); margin-bottom: var(--sp-8);
+  font-style: italic; line-height: 1.4;
+}
+.music-group-artists { display: flex; flex-wrap: wrap; gap: var(--sp-4); }
+
+/* Artist pill with session count badge */
+.corr-tag {
+  display: inline-flex; align-items: center; gap: 4px;
+  background: rgba(52,211,153,0.08); color: var(--calm-col);
+  border: 1px solid rgba(52,211,153,0.2);
+  border-radius: var(--radius-xs); padding: 3px var(--sp-8);
+  font-size: 0.7rem; font-weight: 600;
+  max-width: 140px;
+}
+.corr-tag-count {
+  font-size: 0.58rem; color: rgba(52,211,153,0.55);
+  font-weight: 400; white-space: nowrap;
+}
+
+/* Brain state header pill */
+.corr-band-pill {
+  flex-shrink: 0;
+  background: rgba(99,102,241,0.15); color: #a5b4fc;
+  border: 1px solid rgba(99,102,241,0.3);
+  border-radius: var(--radius-xs); padding: 3px var(--sp-8);
+  font-size: 0.72rem; font-weight: 700; letter-spacing: 0.02em;
+}
+
+/* unused — kept for JS compat */
+.corr-row { display: none; }
+.corr-arrow { display: none; }
+.corr-desc  { display: none; }
+
+/* ── EEG bar rows — single-line plain-English labels ── */
+.eeg-bar-row { align-items: center; }
+.eeg-bar-name {
+  width: 96px; font-size: 0.72rem; color: var(--text2);
+  display: flex; flex-direction: row; align-items: baseline; gap: 4px;
+  flex-shrink: 0;
+}
+.eeg-sym { font-size: 0.68rem; color: var(--text3); flex-shrink: 0; }
+.eeg-plain { font-size: 0.7rem; color: var(--text2); white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis; }
+/* Qualitative label replacing raw number */
+.eeg-bar-qual {
+  width: 82px; text-align: right; font-size: 0.66rem;
+  padding: 1px var(--sp-6);
+  border-radius: 8px; flex-shrink: 0;
+}
+.eeg-bar-qual.pos {
+  background: rgba(52,211,153,0.1); color: var(--calm-col);
+  border: 1px solid rgba(52,211,153,0.2);
+}
+.eeg-bar-qual.neg {
+  background: transparent; color: var(--text3);
+  border: 1px solid transparent;
+}
 
 /* ═══════════════════════════════════════════════════════════════════
    MEMORY LOG (Track History)
@@ -923,10 +1073,10 @@ body.focus-mode::before {
   .sim-btn { display: none; }
   .topbar-tools { display: none; }
 
-  /* ─── Banners ───────────────────────────────────────────────────── */
-  #pending-win-banner, #focus-banner {
+  /* ─── Toast container — adjust top for smaller mobile header ───── */
+  #toast-container { top: 48px; }
+  #pending-win-banner, .alert-banner, #focus-banner {
     font-size: 0.75rem; padding: var(--sp-4) var(--sp-12);
-    margin-bottom: var(--sp-4);
   }
 
   /* ─── Goal strip ────────────────────────────────────────────────── */
@@ -1105,3 +1255,54 @@ body.focus-mode::before {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* ════════════════════════════════════════════════════════════════════
+   MINIMALIST OVERRIDES — remove developer telemetry from user view.
+   All IDs/classes remain in HTML so JS continues to update them
+   silently; only the visual layer is suppressed.
+   ════════════════════════════════════════════════════════════════════ */
+
+/* ── Strip the pipeline bar (developer telemetry) ─────────────────── */
+.pipeline-live { display: none !important; }
+
+/* ── Strip the goal strip (toasts handle transient status) ────────── */
+#goal-strip { display: none !important; }
+
+/* ── Strip the footer pipeline (decorative duplication) ───────────── */
+.hiw-strip { display: none !important; }
+
+/* ── Strip the blink indicator dots from header ───────────────────── */
+#blink-indicator { display: none !important; }
+
+/* ── Body font — DM Sans replaces Inter for warmer, less generic feel */
+body, button, input, select, textarea {
+  font-family: 'DM Sans', system-ui, -apple-system, sans-serif;
+}
+
+/* ── More breathing room now the two top strips are gone ────────────── */
+main { padding-top: var(--sp-4); }
+
+/* ── Header: leaner weight on tool buttons ─────────────────────────── */
+.tool-btn {
+  font-size: 0.72rem;
+  padding: 4px var(--sp-12);
+  border-radius: var(--radius-sm);
+}
+
+/* ── Primary row: slightly taller cards with the extra vertical space ─ */
+.brain-card, .now-playing-card { padding: var(--sp-20); }
+
+/* ── Details panels: tighter when collapsed ─────────────────────────── */
+.details-panel { margin-top: var(--sp-8); }
+.details-summary {
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  color: var(--text3);
+}
+.details-summary:hover { color: var(--text2); }
+
+/* ── Timeline: reduce label noise ───────────────────────────────────── */
+.timeline-header .panel-label { font-size: 0.65rem; letter-spacing: 0.1em; }
+
+/* ── Confidence badge hidden — noise for demo audience ──────────────── */
+.conf-badge { display: none !important; }

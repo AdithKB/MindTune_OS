@@ -33,6 +33,7 @@ let timelineChart           = null;   // Chart.js instance — created once in i
 window._lastFocusModeActive = false;  // Mirrors backend focus_mode_active for optimistic UI
 let heartbeatTick           = 0;      // Increments every 500 ms; used to stagger poll rates
 let lastState = {};                   // Dirty-check cache: stores last value written to each DOM element
+let lastChartTick           = -1;     // Last tick appended to the chart (sliding-window approach)
 
 // escHtml — XSS prevention for innerHTML assignments.
 // Spotify track names, artist names, and Last.fm tags all come from external
@@ -260,7 +261,7 @@ function updateState(data) {
       const chip = document.getElementById('state-chip');
       if (chip) {
         if (pred === 'stressed' && data.music_active) {
-          chip.textContent = 'STRESSED · 🎵 INTERVENING';
+          chip.textContent = 'STRESSED';
           chip.className = 'state-chip stressed';
         } else {
           chip.textContent = pred.toUpperCase();
@@ -342,9 +343,10 @@ function updateState(data) {
       const goalText  = document.getElementById('goal-text');
       if (goalStrip && goalIcon && goalText) {
         if (data.pending_win) {
-          goalStrip.className = 'goal-strip pending-win';
-          goalIcon.textContent = '🏆';
-          goalText.textContent = `Goal Reached: ${inFocusContext ? 'Focused' : 'Calm'} state detected. Saving win...`;
+          // Toast banner handles the win message — goal strip stays neutral
+          goalStrip.className = 'goal-strip';
+          goalIcon.textContent = '🔍';
+          goalText.textContent = 'Monitoring brainwaves...';
         } else if (inFocusContext) {
           if (data.music_active) {
             goalStrip.className = 'goal-strip focus-active';
@@ -372,15 +374,7 @@ function updateState(data) {
       lastState.goalKey = goalKey;
     }
 
-    // ── Pending Win banner ────────────────────────────────────────
-    if (lastState.pending_win !== data.pending_win) {
-      const pendingBanner = document.getElementById('pending-win-banner');
-      if (pendingBanner) {
-        if (data.pending_win) pendingBanner.classList.add('visible');
-        else pendingBanner.classList.remove('visible');
-      }
-      lastState.pending_win = data.pending_win;
-    }
+    lastState.pending_win = data.pending_win;
 
     // ── Blink indicator ───────────────────────────────────────────
     if (data.last_blink_ts && data.last_blink_ts > lastBlinkTs) {
@@ -403,15 +397,16 @@ function updateState(data) {
     // Full circle = 0 offset; empty circle = 351.86 offset.
     const gaugeKey = `${data.stress_count}-${data.prediction}-${data.focus_mode_active}-${data.pending_win}`;
     if (lastState.gaugeKey !== gaugeKey) {
-      const stressCount = Math.min(data.stress_count || 0, 5);
+      const rawStress  = Math.min(data.stress_count   || 0, 5);  // logic / colour threshold
+      const dispStress = Math.min(data.display_stress ?? rawStress, 5);  // EMA-smoothed for visuals
       const CIRC = 351.86;
 
       const gaugeEl = document.getElementById('gauge-fill');
       if (gaugeEl) {
-        gaugeEl.style.strokeDashoffset = CIRC * (1 - stressCount / 5);
+        gaugeEl.style.strokeDashoffset = CIRC * (1 - dispStress / 5);  // smooth ring fill
         if (data.focus_mode_active) {
           gaugeEl.style.stroke = 'var(--focus-col)';
-        } else if (stressCount >= 3) {
+        } else if (rawStress >= 3) {       // colour uses RAW — threshold must be accurate
           gaugeEl.style.stroke = 'var(--stress-col)';
         } else {
           gaugeEl.style.stroke = 'var(--calm-col)';
@@ -421,15 +416,15 @@ function updateState(data) {
       // Update just the text node — the /5 <span class="gauge-denom"> stays in place
       const gaugeValEl = document.getElementById('gauge-val');
       if (gaugeValEl && gaugeValEl.firstChild && gaugeValEl.firstChild.nodeType === Node.TEXT_NODE) {
-        gaugeValEl.firstChild.textContent = String(stressCount);
+        gaugeValEl.firstChild.textContent = String(Math.round(dispStress));
       }
 
       const explainEl = document.getElementById('state-explain');
       if (explainEl) {
         let msg;
         if (data.focus_mode_active)                       msg = 'Focus mode — protecting attention';
-        else if (data.pending_win)                        msg = 'Stress dropping — saving win...';
-        else if (data.music_active && stressCount >= 3)   msg = 'Music intervening — stress should drop';
+        else if (data.pending_win)                        msg = 'Staying calm — stress resolved';
+        else if (data.music_active && stressCount >= 3)   msg = 'Music playing — stress should drop';
         else if (stressCount >= 3)                        msg = 'High stress — AI is selecting music...';
         else if (data.prediction === 'stressed')          msg = 'Elevated stress — monitoring closely';
         else if (data.prediction === 'relaxed')           msg = 'Deeply relaxed — optimal state';
@@ -568,30 +563,28 @@ function updateState(data) {
       lastState.triedKey = triedKey;
     }
 
-    // ── Debug message ─────────────────────────────────────────────
-    if (lastState.debug_msg !== data.debug_msg) {
-      const debugEl = document.getElementById('debug-msg');
-      if (debugEl && data.debug_msg) {
-        debugEl.textContent = data.debug_msg;
-        debugEl.style.display = 'block';
-      }
-      lastState.debug_msg = data.debug_msg;
-    }
+    // ── Debug message — suppressed in demo UI ─────────────────────
+    // debug_msg is used internally; blink feedback shown via #blink-indicator only.
+    lastState.debug_msg = data.debug_msg;
 
     // ── Cognitive Load Index (θ/β) + Alpha Dominance Index ───────────
     const neuroKey = `${data.cognitive_load}-${data.alpha_dominance}`;
     if (lastState.neuroKey !== neuroKey) {
       // Focus banner: show CLI while in focus mode
       const bannerRatio = document.getElementById('focus-banner-ratio');
-      if (bannerRatio) bannerRatio.textContent = data.cognitive_load != null ? `· CLI: ${data.cognitive_load}` : '';
+      if (bannerRatio) bannerRatio.textContent = data.cognitive_load != null ? `· focus load: ${data.cognitive_load > 1.2 ? 'high' : data.cognitive_load > 0.8 ? 'moderate' : 'low'}` : '';
 
       // Neuro-metrics row in brain card: show both indices
       const neuroEl = document.getElementById('neuro-metrics');
       if (neuroEl) {
         if (data.cognitive_load != null || data.alpha_dominance != null) {
+          const cli = data.cognitive_load;
+          const adi = data.alpha_dominance;
+          const cliLabel = cli == null ? '—' : cli > 1.2 ? 'High' : cli > 0.8 ? 'Moderate' : 'Low';
+          const adiLabel = adi == null ? '—' : adi > 0.6 ? 'High' : adi > 0.3 ? 'Moderate' : 'Low';
           neuroEl.innerHTML =
-            `<span title="Cognitive Load Index (DASM Proxy) — θ/β ratio">CLI <strong>${data.cognitive_load ?? '—'}</strong></span>` +
-            `<span title="Alpha Dominance Index — α/(β+γ), single-channel approach motivation proxy (Davidson, 1988)">ADI <strong>${data.alpha_dominance ?? '—'}</strong></span>`;
+            `<span title="Focus load (θ/β ratio) — High means more mental effort or mind-wandering">Focus load: <strong>${cliLabel}</strong></span>` +
+            `<span title="Relaxation level (α dominance) — High means more relaxed">Relaxation: <strong>${adiLabel}</strong></span>`;
           neuroEl.style.display = 'flex';
         } else {
           neuroEl.style.display = 'none';
@@ -605,15 +598,28 @@ function updateState(data) {
     if (lastState.weightsKey !== weightsKey) {
       const eegBars    = document.getElementById('eeg-bars');
       const eegSection = document.getElementById('eeg-influence-section');
-      const BAND_LABELS = { Delta:'δ Delta', Theta:'θ Theta', Alpha:'α Alpha', Beta:'β Beta', Gamma:'γ Gamma', 'α/β ratio':'α/β Ratio', 'θ/β ratio':'θ/β Ratio' };
+      // Plain-English translations for each band
+      const BAND_PLAIN = {
+        'Delta':     { sym: 'δ', name: 'Delta',    state: 'deep recovery'     },
+        'Theta':     { sym: 'θ', name: 'Theta',    state: 'drowsy / meditative'},
+        'Alpha':     { sym: 'α', name: 'Alpha',    state: 'calm awareness'    },
+        'Beta':      { sym: 'β', name: 'Beta',     state: 'alert thinking'    },
+        'Gamma':     { sym: 'γ', name: 'Gamma',    state: 'deep focus'        },
+        'α/β ratio': { sym: '↕', name: 'α/β',     state: 'calm vs alert'     },
+        'θ/β ratio': { sym: '↕', name: 'θ/β',     state: 'fatigue level'     },
+      };
       if (eegBars && eegSection && data.eeg_weights && data.eeg_weights.length > 0) {
         eegBars.innerHTML = data.eeg_weights.map(w => {
           const isPos = w.weight >= 0;
           const pct   = Math.round(w.strength * 100);
+          const bp    = BAND_PLAIN[w.band] || { sym: '', name: w.band, state: '' };
+          const qual  = w.weight > 0.1 ? 'calms fast' : w.weight > 0.02 ? 'helps' : w.weight < -0.1 ? 'less effective' : 'neutral';
           return `<div class="eeg-bar-row">
-            <span class="eeg-bar-name">${escHtml(BAND_LABELS[w.band] || w.band)}</span>
+            <span class="eeg-bar-name" title="${escHtml(bp.state)}">
+              <span class="eeg-sym">${escHtml(bp.sym)}</span><span class="eeg-plain">${escHtml(bp.state)}</span>
+            </span>
             <div class="eeg-bar-track"><div class="eeg-bar-fill ${isPos ? 'pos' : 'neg'}" style="width:${pct}%"></div></div>
-            <span class="eeg-bar-val" style="color:${isPos ? 'var(--green)' : 'var(--red)'}">${isPos ? '+' : ''}${w.weight.toFixed(2)}</span>
+            <span class="eeg-bar-qual ${isPos ? 'pos' : 'neg'}">${qual}</span>
           </div>`;
         }).join('');
         eegSection.style.display = '';
@@ -643,6 +649,18 @@ function updateState(data) {
         }
         mlSec.style.display = mlVisible ? '' : 'none';
       }
+
+      // ── Personalisation widget inline preview ────────────────────
+      // data.ml_top_tags is only available here (from /state), not in /feedback.
+      const learnedEl     = document.getElementById('pref-learned');
+      const learnedTagsEl = document.getElementById('pref-learned-tags');
+      if (learnedEl && learnedTagsEl && data.ml_top_tags && data.ml_top_tags.length > 0) {
+        learnedTagsEl.innerHTML = data.ml_top_tags.slice(0, 4).map(t =>
+          `<span class="pref-tag good" title="ML weight: +${t.weight.toFixed(2)}">${escHtml(t.tag)}</span>`
+        ).join('');
+        learnedEl.style.display = '';
+      }
+
       lastState.mlKey = mlKey;
     }
 
@@ -727,9 +745,10 @@ function updateBands(bandScores) {
       const score = bandScores[m.key] ?? 0;
       const pct   = Math.round(score * 100);
       const color = bandColor(score);
+      const [sym, word] = m.label.split(' ');  // split "β Beta" → "β" + "Beta"
       return `
         <div class="band-item" title="${escHtml(m.label)} — ${pct}% toward stressed">
-          <div class="band-name">${escHtml(m.label)}</div>
+          <div class="band-name">${escHtml(sym)}<br>${escHtml(word)}</div>
           <div class="band-bar-wrap">
             <div class="band-bar" style="width:${pct}%;background:${color};"></div>
           </div>
@@ -791,7 +810,7 @@ function updatePipeline(data) {
     const hasData = wins > 0 || fbTotal > 0;
     lrnEl.classList.toggle('active', hasData);
     lrnEl.classList.remove('stressed');
-    lrnVal.textContent = hasData ? `${wins}W · ${fbTotal}FB` : 'no data yet';
+    lrnVal.textContent = hasData ? `${wins} wins · ${fbTotal} feedback` : 'no data yet';
   }
 }
 
@@ -817,7 +836,7 @@ function initChart() {
         }]
       },
       options: {
-        animation: { duration: 600, easing: 'easeInOutCubic' },
+        animation: { duration: 400, easing: 'easeOutQuart' },
         responsive: true,
         maintainAspectRatio: false, // Chart will now expand to fill the available panel height
         interaction: { mode: 'index', intersect: false },
@@ -861,7 +880,7 @@ window.onload = () => {
   // 5. Safety fallback: dismiss the startup loader after 4 s even if /state never responds.
   document.querySelectorAll('.panel, #timeline-chart').forEach(el => el.classList.add('skeleton'));
   initChart();
-  pollState(); pollMemory(); pollSessions(); pollFeedback();
+  pollState(); pollMemory(); pollSessions(); pollFeedback(); pollCorrelations();
   setInterval(heartbeat, 500);
   setTimeout(dismissStartupLoader, 4000);
 };
@@ -869,19 +888,52 @@ window.onload = () => {
 function updateTimeline(data) {
   try {
     if (!timelineChart || !data.timeline || data.timeline.length === 0) return;
+
+    const cd = timelineChart.data;
+    const ds = cd.datasets[0];
+
     const accentColor = (data.current_mode === 'focus') ? '#818cf8' : '#10b981';
     const accentFill  = (data.current_mode === 'focus')
       ? 'rgba(129,140,248,0.1)' : 'rgba(16,185,129,0.1)';
-    const ds = timelineChart.data.datasets[0];
-    ds.segment = {
-      borderColor:     ctx => ctx.p1.parsed.y >= 3 ? '#f43f5e' : accentColor,
-      backgroundColor: ctx => ctx.p1.parsed.y >= 3 ? 'rgba(244,63,94,0.15)' : accentFill,
-    };
-    ds.borderColor     = accentColor;
-    ds.backgroundColor = accentFill;
-    timelineChart.data.labels = data.timeline.map(p => p.t);
-    ds.data                   = data.timeline.map(p => p.stress);
-    timelineChart.update();
+
+    // Detect main-loop restart (tick regression of >50) → wipe chart and rebuild.
+    const incomingFirst = data.timeline[0]?.t ?? 0;
+    if (lastChartTick > 50 && incomingFirst < lastChartTick - 50) {
+      cd.labels  = [];
+      ds.data    = [];
+      lastChartTick = -1;
+    }
+
+    // Sliding-window append: only add ticks we haven't charted yet.
+    // Avoids replacing all 150 points every 500 ms (which caused full redraws
+    // and the "3 readings / compressed 150 readings" oscillation).
+    const newPoints = data.timeline.filter(p => p.t > lastChartTick);
+    if (newPoints.length === 0 &&
+        ds.borderColor === accentColor) return;   // nothing changed — skip update
+
+    for (const p of newPoints) {
+      cd.labels.push(p.t);
+      ds.data.push(p.stress);
+      lastChartTick = p.t;
+    }
+
+    // Keep at most 150 points (mirrors the Python deque maxlen).
+    while (cd.labels.length > 150) {
+      cd.labels.shift();
+      ds.data.shift();
+    }
+
+    // Reapply colours (only mutate if mode changed — cheap reference check).
+    if (ds.borderColor !== accentColor) {
+      ds.borderColor     = accentColor;
+      ds.backgroundColor = accentFill;
+      ds.segment = {
+        borderColor:     ctx => ctx.p1.parsed.y >= 3 ? '#f43f5e' : accentColor,
+        backgroundColor: ctx => ctx.p1.parsed.y >= 3 ? 'rgba(244,63,94,0.15)' : accentFill,
+      };
+    }
+
+    timelineChart.update('none');
   } catch (e) {
     console.error("updateTimeline error:", e);
   }
@@ -1007,24 +1059,116 @@ function renderFeedback(d) {
     }
   }
 
-  const topTagsEl  = document.getElementById('top-tags');
-  const badTagsEl  = document.getElementById('bad-tags');
-  if (d.top_tags && d.top_tags.length > 0) {
-    topTagsEl.innerHTML = d.top_tags.map(t => `<span class="pref-tag good">${escHtml(t.tag)}</span>`).join('');
-    document.getElementById('top-tags-row').style.display = 'flex';
+  // ── Personalisation widget: "What works for your brain" ─────────
+  // Uses top_tags from /feedback (frequency-based, always populated).
+  // ml_top_tags from /state is unreliable when Last.fm tags are sparse.
+  const learnedEl     = document.getElementById('pref-learned');
+  const learnedTagsEl = document.getElementById('pref-learned-tags');
+  if (learnedEl && learnedTagsEl && d.top_tags && d.top_tags.length > 0) {
+    learnedTagsEl.innerHTML = d.top_tags.slice(0, 5).map(t =>
+      `<span class="pref-tag good" title="Win rate: ${Math.round(t.score * 100)}%">${escHtml(t.tag)}</span>`
+    ).join('');
+    learnedEl.style.display = '';
   }
-  if (d.worst_tags && d.worst_tags.length > 0) {
-    badTagsEl.innerHTML = d.worst_tags.map(t => `<span class="pref-tag bad">${escHtml(t.tag)}</span>`).join('');
-    document.getElementById('bad-tags-row').style.display = 'flex';
-  }
-  const emptyEl = document.getElementById('brain-patterns-empty');
-  if (emptyEl) {
-    const hasContent = (d.top_tags && d.top_tags.length > 0) || (d.worst_tags && d.worst_tags.length > 0);
-    emptyEl.style.display = hasContent ? 'none' : '';
+
+  // ── Fallback: simple top tags when EEG×music correlation isn't available yet ─
+  const corrListEl   = document.getElementById('corr-list');
+  const fallbackEl   = document.getElementById('top-tags-fallback');
+  const simpleTagsEl = document.getElementById('top-tags-simple');
+  const emptyEl      = document.getElementById('brain-patterns-empty');
+  const corrEmpty    = !corrListEl || corrListEl.style.display === 'none' || corrListEl.innerHTML === '';
+  if (corrEmpty && fallbackEl && simpleTagsEl && d.top_tags && d.top_tags.length > 0) {
+    simpleTagsEl.innerHTML = d.top_tags.slice(0, 6).map(t =>
+      `<span class="pref-tag good" title="Win rate: ${Math.round(t.score * 100)}%">${escHtml(t.tag)}</span>`
+    ).join('');
+    fallbackEl.style.display = '';
+    if (emptyEl) emptyEl.style.display = 'none';
+  } else if (corrEmpty && emptyEl) {
+    emptyEl.style.display = '';
   }
 }
 
 function pollFeedback() { fetch('/feedback').then(r => r.json()).then(renderFeedback).catch(() => {}); }
+
+// Band symbols for display
+const BAND_SYMBOLS = { Delta: 'δ', Theta: 'θ', Alpha: 'α', Beta: 'β', Gamma: 'γ' };
+
+// Plain-English brain state descriptions for correlation display
+const BAND_STATES = {
+  Delta: { sym: 'δ', label: 'Deep recovery',      desc: 'when your brain is in slow-wave recovery' },
+  Theta: { sym: 'θ', label: 'Drowsy / meditative', desc: 'when your mind is calm and near-meditative' },
+  Alpha: { sym: 'α', label: 'Calm awareness',      desc: 'when you\'re in a relaxed, alert state' },
+  Beta:  { sym: 'β', label: 'Active thinking',     desc: 'when your brain is actively engaged' },
+  Gamma: { sym: 'γ', label: 'Deep focus',           desc: 'when you\'re in intense cognitive focus' },
+};
+
+function renderCorrelations(rows) {
+  const listEl      = document.getElementById('corr-list');
+  const insightEl   = document.getElementById('brain-insight');
+  const headlineEl  = document.getElementById('insight-headline');
+  const fallbackEl  = document.getElementById('top-tags-fallback');
+  const emptyEl     = document.getElementById('brain-patterns-empty');
+  if (!listEl) return;
+
+  if (!rows || rows.length === 0) {
+    listEl.style.display = 'none';
+    if (insightEl) insightEl.style.display = 'none';
+    return;
+  }
+
+  // Group by band, tracking total wins per group
+  const groups = {};
+  rows.forEach(r => {
+    if (!groups[r.band]) groups[r.band] = { tags: [], totalCount: 0 };
+    groups[r.band].tags.push({ tag: r.tag, count: r.count });
+    groups[r.band].totalCount += r.count;
+  });
+
+  // Pick headline group: band with most total wins across all its artists
+  // This surfaces the most statistically robust finding, not just highest per-row lift.
+  const headlineBand = Object.entries(groups)
+    .sort((a, b) => b[1].totalCount - a[1].totalCount)[0][0];
+  const headlineGroup = groups[headlineBand];
+  const headlineState = BAND_STATES[headlineBand] || { label: headlineBand };
+  const headlineArtists = headlineGroup.tags.slice(0, 3).map(t => t.tag).join(', ');
+  const more = headlineGroup.tags.length > 3 ? ` & ${headlineGroup.tags.length - 3} more` : '';
+
+  if (insightEl && headlineEl) {
+    headlineEl.innerHTML =
+      `Your brain responds best to music when in <strong>${escHtml(headlineState.label)}</strong> — ` +
+      `${escHtml(headlineArtists)}${escHtml(more)} calm you most reliably ` +
+      `<span class="insight-meta">(${headlineGroup.totalCount} wins)</span>`;
+    insightEl.style.display = '';
+  }
+
+  // Render groups sorted by totalCount descending
+  const sortedGroups = Object.entries(groups)
+    .sort((a, b) => b[1].totalCount - a[1].totalCount);
+
+  listEl.innerHTML = sortedGroups.map(([band, grp]) => {
+    const bs    = BAND_STATES[band] || { sym: '', label: band, desc: '', example: '' };
+    const pills = grp.tags.map(({ tag, count }) => {
+      const label = tag.length > 20 ? tag.slice(0, 19) + '…' : tag;
+      return `<span class="corr-tag" title="${escHtml(tag)} · ${count} wins">${escHtml(label)}<span class="corr-tag-count">${count}</span></span>`;
+    }).join('');
+    return `<div class="music-group">
+      <div class="music-group-header">
+        <span class="corr-band-pill">${escHtml(bs.sym)} ${escHtml(bs.label)}</span>
+        <span class="music-group-wins">${grp.totalCount} wins</span>
+      </div>
+      <div class="music-group-state-desc">${escHtml(bs.desc)}</div>
+      <div class="music-group-artists">${pills}</div>
+    </div>`;
+  }).join('');
+
+  listEl.style.display = '';
+  if (fallbackEl) fallbackEl.style.display = 'none';
+  if (emptyEl) emptyEl.style.display = 'none';
+}
+
+function pollCorrelations() {
+  fetch('/correlations').then(r => r.json()).then(renderCorrelations).catch(() => {});
+}
 
 // heartbeat — single timer that drives all polling at different rates.
 // Everything runs off one 500 ms interval to avoid timer drift and make
@@ -1034,6 +1178,7 @@ function pollFeedback() { fetch('/feedback').then(r => r.json()).then(renderFeed
 //                           /feedback    : preference model stats + tags
 //   Every 30     ( 15  s) — /sessions    : per-session win-rate history
 //   Every 60     ( 30  s) — /profile     : averaged audio features of winning tracks
+//                           /correlations: EEG × music tag co-occurrence
 // Slower endpoints are polled less often because their data changes infrequently
 // and they read from files on disk — no need to hit them 2× per second.
 async function heartbeat() {
@@ -1041,4 +1186,5 @@ async function heartbeat() {
   pollState();
   if (heartbeatTick % 10 === 0) { pollMemory(); pollFeedback(); }
   if (heartbeatTick % 30 === 0) { pollSessions(); }
+  if (heartbeatTick % 60 === 0) { pollCorrelations(); }
 }

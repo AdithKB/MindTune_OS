@@ -163,6 +163,7 @@ pending_win_response_s   = 0            # seconds from intervention start to str
 agent_reasoning          = "No intervention yet"
 status_message           = "Monitoring..."
 band_scores              = {}            # H-1: initialised at module level
+smoothed_band_scores     = {}            # EMA-smoothed version for dashboard stability
 focus_mode_active        = False  # True while Focus Mode music is playing
 last_blink_ts            = 0.0    # Unix timestamp of the last confirmed double-blink event
 last_debug_msg           = "System initialized"
@@ -172,6 +173,7 @@ timeline_points      = collections.deque(maxlen=150)
 timeline_markers     = []
 tick                 = 0
 debug_clear_tick     = 0
+display_stress_ema   = 0.0   # EMA-smoothed stress for gauge display (trigger logic uses raw)
 recent_predictions   = []
 interventions_tried  = []
 now_playing_info     = None  # cached; refreshed every 5 ticks to avoid blocking the loop
@@ -414,8 +416,23 @@ try:
 
         prediction, band_scores, confidence = eeg_source.next_reading()
 
+        # ── EMA Smoothing for Dashboard ───────────────────────────────────────
+        # Alpha of 0.3 balances responsiveness with visual stability.
+        # Prevents the "dancing bars" effect on the dashboard.
+        for band, val in band_scores.items():
+            if band not in smoothed_band_scores:
+                smoothed_band_scores[band] = val
+            else:
+                smoothed_band_scores[band] = round(
+                    (0.3 * val) + (0.7 * smoothed_band_scores[band]), 3
+                )
+
         recent_predictions = (recent_predictions + [prediction])[-5:]
         stress_count = recent_predictions.count('stressed')
+
+        # EMA-smooth the displayed gauge value (α=0.35 → 65% lag, prevents jumpy gauge).
+        # Trigger logic always uses raw stress_count so intervention timing is unaffected.
+        display_stress_ema = round(0.35 * stress_count + 0.65 * display_stress_ema, 2)
 
         if len(timeline_markers) > 200:
             timeline_markers[:] = timeline_markers[-200:]
@@ -682,7 +699,7 @@ try:
             "status_message":      status_message,
             "timeline":            list(timeline_points),
             "markers":             timeline_markers,
-            "band_scores":         band_scores,
+            "band_scores":         smoothed_band_scores,
             "confidence":          round(confidence, 3),
             "focus_mode_active":   focus_mode_active,
             "current_mode":        current_mode,
@@ -702,6 +719,7 @@ try:
             "ml_top_tags":         pref_insights['ml_top_tags'],
             "ml_worst_tags":       pref_insights['ml_worst_tags'],
             "signal_saturated":    eeg_source.is_signal_saturated(),
+            "display_stress":      display_stress_ema,
         }
 
         atomic_write_json(system_state, STATE_PATH)
@@ -741,3 +759,15 @@ except KeyboardInterrupt:
         pass
 
     sys.exit(0)
+
+except Exception as _fatal:
+    # Catch any unhandled exception so the crash is logged clearly rather than
+    # silently killing the process and blanking the dashboard chart.
+    print(f"\n[FATAL] Main loop crashed: {_fatal}")
+    import traceback
+    traceback.print_exc()
+    try:
+        eeg_source.close()
+    except Exception:
+        pass
+    sys.exit(1)
